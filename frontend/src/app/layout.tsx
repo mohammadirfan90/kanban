@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { ThemeProvider } from '@/components/theme-provider';
+import { AuthProvider } from '@/contexts/AuthContext';
 import './globals.css';
 
 const inter = Inter({
@@ -21,10 +22,12 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="en" suppressHydrationWarning className={inter.variable}>
       <body className="font-sans antialiased">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <TooltipProvider delayDuration={150}>
-            {children}
-            <Toaster position="top-right" richColors closeButton />
-          </TooltipProvider>
+          <AuthProvider>
+            <TooltipProvider delayDuration={150}>
+              {children}
+              <Toaster position="top-right" richColors closeButton />
+            </TooltipProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>
