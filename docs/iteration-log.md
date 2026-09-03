@@ -225,3 +225,81 @@ Entries are appended by the agent after every non-trivial iteration (see `/AGENT
 - Spec 04: Auth module (JWT register/login endpoints)
 - Spec 05: Boards CRUD + role-based sharing
 - Wire `prisma migrate deploy` into a docker-compose workflow so future migrations are automatic
+
+---
+
+## [2026-09-03 07:20] — Iteration 4: Spec 03 — Next.js + shadcn frontend scaffold
+
+**Phase:** Day 1 / Frontend
+
+### What was built
+- Scaffolded Next.js 14.2.35 with `create-next-app` (TypeScript, Tailwind, ESLint, App Router, src dir, `@/*` alias, npm)
+- Initialized shadcn via `npx shadcn@latest init --defaults --base radix` — installed `class-variance-authority`, `clsx`, `tailwind-merge`, `lucide-react`, `next-themes`, `sonner`, `tw-animate-css`
+- Installed 21 shadcn primitives via `shadcn add`: `alert`, `alert-dialog`, `avatar`, `badge`, `button`, `card`, `command`, `dialog`, `dropdown-menu`, `form`, `input`, `input-group`, `label`, `popover`, `scroll-area`, `select`, `separator`, `skeleton`, `sonner`, `tabs`, `textarea`, `tooltip`
+- Installed form deps: `react-hook-form`, `zod`, `@hookform/resolvers`
+- Wrote `src/app/globals.css` with HSL CSS variables for light + dark theme per DESIGN.md (background, foreground, card, popover, primary, secondary, muted, accent, destructive, border, input, ring + kanban-owner/editor/viewer role colors)
+- Wrote `tailwind.config.ts` with `darkMode: 'class'`, full color palette reading HSL vars, `kanban.{owner,editor,viewer}` tokens, font-sans using `--font-inter`, radix accordion keyframes
+- Wrote `src/app/layout.tsx` — Inter font via `next/font/google` with `--font-inter` CSS var, `ThemeProvider` (attribute=class, defaultTheme=system, enableSystem), `TooltipProvider` (150ms delay), `<Toaster position="top-right" richColors closeButton />`, `suppressHydrationWarning` on `<html>`
+- Wrote `src/app/page.tsx` — premium landing hero with header (logo, mode toggle, login/register CTAs), centered hero (badge + h1 + p + 2-button CTA row), 3-card feature section, footer. Uses shadcn `Button`, `Card`, `CardContent`, Lucide icons (`KanbanSquare`, `ArrowRight`, `MoonStar`, `Users`, `Zap`)
+- Wrote `src/lib/types.ts` — User, Board, BoardMember, Column, Task, ApiError, BoardRole interfaces (stubs)
+- Wrote `src/lib/api.ts` — `request<T>(path, options)` with JWT injection from `localStorage.kanban_token`, throws `ApiClientError` with `.status`, `.details`, `.errorName` on non-2xx, handles 204 No Content, supports abort signals
+- Wrote `src/components/theme-provider.tsx` — re-export of next-themes `ThemeProvider` (using root export, not `dist/types` which doesn't exist in 0.4.x)
+- Wrote `src/components/mode-toggle.tsx` — dropdown with Sun/Moon icons, light/dark/system options
+- Deleted `src/app/fonts/` (Geist fonts from shadcn's default template — replaced by Inter via next/font)
+- Updated `.gitignore` to track `.env.example` while ignoring `.env` and `.env*.local`
+- Added scripts: `typecheck` (tsc --noEmit), `format` (prettier); installed `prettier@3`
+
+### Decisions
+- **Used latest `shadcn@latest` CLI (not legacy `shadcn-ui`)** — the new CLI doesn't support `--base-color` flag; instead uses `--defaults` + `--base radix` to pick the radix-nova preset. Result: components.json style = `radix-nova`, which is the current default — kept this rather than forcing `new-york` since the components themselves are identical and shadcn recommends the newer preset
+- **HSL tokens instead of shadcn's OKLCH default** — DESIGN.md explicitly mandates HSL values for premium feel; rewrote `globals.css` with the exact tokens from DESIGN.md. shadcn components still work because they reference variables by name, not value format
+- **Domain role colors as HSL CSS vars** — `--kanban-owner/editor/viewer` mapped to `kanban.owner/editor/viewer` Tailwind tokens; matches DESIGN.md exactly (indigo/emerald/slate)
+- **Inter via `next/font/google` (variable, swap)** — premium feel per DESIGN.md; auto-subsets to latin; zero CLS
+- **API client throws typed `ApiClientError`** — components can switch on `.status` (e.g., `if (e.status === 401) router.push('/login')`) without parsing the message
+- **`tokenStore` is a small object, not a class** — 4 lines, three methods, no need for instantiation overhead
+- **`request<T>` returns `undefined as T` on 204** — Next.js doesn't have a clean way to express void responses; the cast is intentional and documented
+- **Default import for supertest would have been wrong here** — in frontend, `fetch` is global, no import needed
+- **Removed Geist fonts** — shadcn init brought them as defaults; we use Inter per DESIGN.md so they're dead weight
+
+### Files touched
+- `frontend/package.json`, `package-lock.json` — modify
+- `frontend/tsconfig.json`, `next.config.mjs`, `postcss.config.mjs` — from create-next-app
+- `frontend/.gitignore`, `.env.example` — modify (added `.env` to ignore)
+- `frontend/components.json` — create (shadcn config)
+- `frontend/tailwind.config.ts` — rewrite (HSL tokens + kanban role colors)
+- `frontend/src/app/layout.tsx` — rewrite (Inter, ThemeProvider, Toaster, TooltipProvider)
+- `frontend/src/app/page.tsx` — rewrite (premium landing)
+- `frontend/src/app/globals.css` — rewrite (HSL light + dark, kanban role vars)
+- `frontend/src/app/fonts/` — deleted (Geist)
+- `frontend/src/lib/utils.ts` — from shadcn init
+- `frontend/src/lib/types.ts` — create
+- `frontend/src/lib/api.ts` — create
+- `frontend/src/components/ui/*` — create (21 shadcn components)
+- `frontend/src/components/theme-provider.tsx` — create
+- `frontend/src/components/mode-toggle.tsx` — create
+- `docs/iteration-log.md` — append (this entry)
+
+### Considered but rejected
+- **`npx shadcn-ui@latest` (legacy CLI)** — old, deprecated, doesn't support Radix UI variants; current `shadcn@latest` is the path forward
+- **Forcing `style: "new-york"`** — would require manually editing components.json and re-running add commands; the radix-nova preset is the current default and contains all primitives
+- **Adding `eslint-plugin-jsx-a11y`** — Next.js's `next/core-web-vitals` already includes a11y rules; adding more would be redundant
+- **Manually writing shadcn components from scratch** — defeats the whole point of shadcn (copy-paste ownership of generated code)
+- **TanStack Query for API state** — overkill for Spec 03; v1 uses `useState` + custom hooks; can add TanStack Query later if caching needs emerge
+- **`framer-motion` for landing animations** — DESIGN.md says "No bounce, no parallax, no auto-playing animations" — page transitions are instant by design; would add bundle weight for no gain
+- **Using next-themes' `defaultTheme: 'light'`** — `'system'` respects the OS preference, which is what premium products do
+
+### Verification
+- `npm run typecheck` → ✅ 0 errors (fixed `next-themes/dist/types` import path which doesn't exist in 0.4.x; now imports `ThemeProviderProps` from root)
+- `npm run lint` → ✅ "No ESLint warnings or errors"
+- `npm run build` → ✅ Compiled successfully; 5/5 static pages generated; landing page is 77.3 kB (186 kB First Load JS)
+- `npm run dev` → ✅ Next.js dev server up on port 3000
+- `curl -s http://localhost:3000/` → ✅ 200 OK; HTML contains hero text "Organize your work", "Get started", "Instant feedback", "Share with your team", "Light or dark", "Kanban"
+- `grep -rE "#[0-9a-fA-F]{6}" src/components/ src/app/` → ✅ 0 hardcoded hex colors
+
+### Known caveats
+- 5 npm vulnerabilities in transitive deps (one fewer than backend, all transitive); will audit in the dedicated cleanup commit
+- Backend (PID 29068 from Spec 02) may still be running on port 3001 — leave alone, not blocking
+- Tailwind's `darkMode: 'class'` set globally, but `dark:` variant examples in DESIGN.md assume this; verified
+
+### Next
+- Spec 04: Auth module (backend JWT register/login endpoints + frontend AuthContext + login/register pages)
+- Spec 05: Boards CRUD (backend services + controllers + frontend boards list page)
