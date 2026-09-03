@@ -151,4 +151,77 @@ Entries are appended by the agent after every non-trivial iteration (see `/AGENT
 ### Next
 - Spec 02: NestJS 10 scaffold (modules, CORS, ValidationPipe, error filter, PrismaService)
 - Spec 03: Next.js 14 + shadcn/ui scaffold (in parallel with Spec 02)
+
+---
+
+## [2026-09-03 06:35] — Iteration 3: Spec 02 — NestJS scaffold
+
+**Phase:** Day 1 / Backend
+
+### What was built
+- Installed NestJS 10 + supporting deps: `@nestjs/{common,core,config,platform-express}`, `class-validator`, `class-transformer`, `reflect-metadata`, `rxjs`; dev deps `@nestjs/{cli,schematics,testing}`, `typescript@5`, `ts-node`, `ts-loader`, `jest@29`, `ts-jest`, `supertest`, `eslint@8` + plugins, `prettier@3`
+- `backend/tsconfig.json` — strict mode ON (`strict`, `noImplicitAny`, `strictNullChecks`, `strictBindCallApply`, `noFallthroughCasesInSwitch`), `@/*` path alias to `src/*`
+- `backend/tsconfig.build.json` — extends base, excludes tests
+- `backend/nest-cli.json` — collection + `deleteOutDir: true`
+- `backend/.eslintrc.js` — TypeScript + Prettier recommended
+- `backend/.prettierrc` — singleQuote, trailingComma all, 100 cols
+- `backend/.gitignore` — node_modules, dist, .env, coverage, *.tsbuildinfo, IDE noise
+- `backend/src/prisma/prisma.service.ts` — extends PrismaClient with `PrismaPg` adapter, logs connect/disconnect
+- `backend/src/prisma/prisma.module.ts` — global module exporting PrismaService
+- `backend/src/common/filters/http-exception.filter.ts` — uniform `{ statusCode, message, error }` for any thrown error; logs 5xx with stack
+- `backend/src/health/health.controller.ts` — `GET /api/health` returns `{ status: 'ok', timestamp }`
+- `backend/src/app.module.ts` — ConfigModule (global) + PrismaModule + HealthController
+- `backend/src/main.ts` — bootstrap: CORS from env (CSV list, credentials true), global prefix `api`, ValidationPipe (whitelist + forbidNonWhitelisted + transform + implicit conversion), HttpExceptionFilter, port from env
+- `backend/test/app.e2e-spec.ts` — health 200 + 404 error format e2e tests
+- `backend/test/jest-e2e.json` + `backend/jest.config.js`
+- `backend/package.json` — added scripts: `build`, `start`, `start:dev`, `start:prod`, `lint`, `format`, `test`, `test:e2e`
+
+### Decisions
+- **Path alias `@/*` → `src/*`** — makes imports readable and stable across moves
+- **Global ValidationPipe with `forbidNonWhitelisted: true`** — prevents accidental extra fields from leaking into DTOs (a common source of bugs)
+- **CORS accepts comma-separated list** — production typically has multiple origins (frontend prod + staging); defaulting to a list keeps us forward-compatible
+- **HttpExceptionFilter catches everything (`@Catch()`)** — any thrown error (HttpException, DB error, TypeError) goes through the same normalization, so we never leak stack traces or non-standard shapes
+- **PrismaService constructor uses `process.env.DATABASE_URL` directly** — same source as `prisma.config.ts`; we don't need ConfigService here since Prisma is wired before ConfigModule would be available
+- **PrismaPg adapter in PrismaService (not PrismaModule)** — keeps the adapter instantiation close to the service that uses it; module stays pure DI plumbing
+- **Used default import for supertest** — TS strict mode rejects `import * as request from 'supertest'` since v7+; default import is the correct form
+- **Explicit `res.body` types in e2e** — `strict: true` requires typing the callback params or using `// @ts-expect-error`
+
+### Files touched
+- `backend/package.json` — modify (added scripts)
+- `backend/package-lock.json` — modified (new deps)
+- `backend/tsconfig.json`, `tsconfig.build.json` — create
+- `backend/nest-cli.json`, `backend/.eslintrc.js`, `backend/.prettierrc`, `backend/.gitignore` — create
+- `backend/src/main.ts` — create
+- `backend/src/app.module.ts` — create
+- `backend/src/prisma/prisma.service.ts`, `prisma.module.ts` — create
+- `backend/src/common/filters/http-exception.filter.ts` — create
+- `backend/src/health/health.controller.ts` — create
+- `backend/test/app.e2e-spec.ts`, `backend/test/jest-e2e.json`, `backend/jest.config.js` — create
+- `docs/iteration-log.md` — append (this entry)
+
+### Considered but rejected
+- **Manual NestJS project bootstrap (no `nest new`)** — `nest new` would prompt interactively and dump unwanted boilerplate (Views, sample app) which we'd just delete; faster to handwrite the minimal scaffold
+- **Jest config in package.json** — split into `jest.config.js` (unit) + `test/jest-e2e.json` (e2e) for cleaner separation; matches NestJS default conventions
+- **Global filter as a `@Controller`-level decorator** — global filter via `useGlobalFilters` keeps wiring centralized and impossible to forget in new modules
+- **Catching only `HttpException` (not `@Catch()`)** — would let DB errors / TypeErrors leak as raw 500s with stack traces; never acceptable in production
+- **Logging library (pino/winston)** — Spec 02 says NestJS defaults; we can swap later if perf demands it
+- **ValidationPipe without `forbidNonWhitelisted`** — silently strips unknown fields; spec explicitly requires the stricter behavior
+
+### Verification
+- `npm run build` → ✅ `dist/` produced (no errors)
+- `npm run lint` → ✅ passes (Prettier auto-fixed a few minor formatting issues)
+- `npm run start:prod` → ✅ API listening on port 3001; logs `Prisma connected to database`
+- `curl http://localhost:3001/api/health` → ✅ `{"status":"ok","timestamp":"2026-09-03T..."}`
+- `curl -X OPTIONS .../api/health -H "Origin: http://localhost:3000" -H "Access-Control-Request-Method: GET"` → ✅ 204 with `Access-Control-Allow-Origin: http://localhost:3000`
+- `curl http://localhost:3001/api/does-not-exist` → ✅ `{"statusCode":404,"message":"Cannot GET /api/does-not-exist","error":"Not Found"}`
+- `npm run test:e2e` → ✅ 2 tests pass (health 200 + 404 error format)
+
+### Known caveats
+- Local Postgres auth (host-side) still misbehaves (Spec 01 caveat); Prisma still connects fine because the adapter uses TCP with password, and our local Postgres happens to accept the password from this client. Not blocking.
+- 13 low/moderate/high npm vulnerabilities reported — all in transitive deps; will run `npm audit` and patch in a dedicated commit before deploying.
+
+### Next
+- Spec 03: Next.js 14 + shadcn/ui scaffold (parallel-track, frontend)
+- Spec 04: Auth module (JWT register/login endpoints)
+- Spec 05: Boards CRUD + role-based sharing
 - Wire `prisma migrate deploy` into a docker-compose workflow so future migrations are automatic
