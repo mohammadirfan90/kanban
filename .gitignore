@@ -1,4 +1,34 @@
+# Tooling / agent runtime
 .puku
 .agents
 .puku-cli
+
+# Docs and references (kept local, not for the repo)
 temp-docs/
+
+# Local Postgres data dir (mounted into Docker container; ephemeral)
+.pgdata/
+
+# Node / TypeScript build outputs
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+
+# Env files — keep .env.example tracked, never .env
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env.local
+
+# Logs and coverage
+*.log
+coverage/
+.nyc_output/
+
+# OS / IDE noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

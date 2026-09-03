@@ -69,6 +69,19 @@ These are non-negotiable. If an agent violates them, the user will reject the wo
 - **Always ask before `git commit`.** (Already enforced globally via `~/.puku-cli/settings.json` — the commit prompt will fire.)
 - **Commit messages: one-line only.** No multi-paragraph commits. No body. No footer.
 - **NEVER include `Co-Authored-By: Puku` or `Co-Authored-By: Claude` in any commit message or PR description.** (Already enforced globally.)
+- **Commit messages MUST use conventional commit type prefix.** Format: `<type>: <subject>`. Types:
+  - `feat` — a new feature for the user (correlates with MINOR in SemVer)
+  - `fix` — a bug fix for the user (correlates with PATCH in SemVer)
+  - `docs` — changes to documentation
+  - `style` — formatting, missing semi-colons, etc.; no production code change
+  - `refactor` — refactoring production code, e.g. renaming a variable
+  - `perf` — a code change that improves performance
+  - `test` — adding missing tests or correcting existing tests
+  - `chore` — updating build tasks, package manager configs, etc.
+  - `ci` — changes to CI configuration files and scripts
+  - `build` — changes that affect the build system or external dependencies
+- **Subject after the prefix** is short (≤72 chars total line), imperative mood ("add", not "added"), no trailing period, lowercase.
+- Examples: `feat: add task move endpoint`, `fix: correct owner delete cascade`, `docs: update iteration log`, `chore: bump prisma to 7.10.0`
 - Never amend a commit unless explicitly asked.
 - Never force-push to main.
 
