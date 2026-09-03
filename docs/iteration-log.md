@@ -303,3 +303,120 @@ Entries are appended by the agent after every non-trivial iteration (see `/AGENT
 ### Next
 - Spec 04: Auth module (backend JWT register/login endpoints + frontend AuthContext + login/register pages)
 - Spec 05: Boards CRUD (backend services + controllers + frontend boards list page)
+
+---
+
+## [2026-09-03 07:50] — Iteration 5: Spec 04 — Auth module (backend + frontend)
+
+**Phase:** Day 2 / Auth
+
+### What was built
+
+#### Backend
+- Installed: `@nestjs/jwt@10`, `@nestjs/passport@10`, `passport@0.7`, `passport-jwt@4`, `bcrypt@5` + `@types/bcrypt`, `@types/passport-jwt`
+- `backend/src/auth/dto/register.dto.ts` — email, password (min 8, max 128), name (required, max 100); all via `class-validator`
+- `backend/src/auth/dto/login.dto.ts` — email, password
+- `backend/src/auth/auth.service.ts` — register/login/getMe with bcrypt cost 12, JWT signing via `@nestjs/jwt`. Same "Invalid credentials" message for both wrong-password and unknown-email cases (anti-enumeration). Even hashes a dummy bcrypt on unknown email to keep timing similar
+- `backend/src/auth/auth.controller.ts` — `POST /api/auth/register` (201), `POST /api/auth/login` (200), `GET /api/auth/me` (protected by JwtAuthGuard)
+- `backend/src/auth/strategies/jwt.strategy.ts` — Passport JWT strategy, validates HS256 with secret from `JWT_SECRET`
+- `backend/src/auth/guards/jwt-auth.guard.ts` — `AuthGuard('jwt')`
+- `backend/src/auth/decorators/current-user.decorator.ts` — extracts `req.user` (the JWT payload)
+- `backend/src/auth/auth.module.ts` — wires Passport, JwtModule (async factory reading `JWT_SECRET` + `JWT_EXPIRES_IN`), controllers, providers, exports
+- Wired `AuthModule` into `app.module.ts`
+- `backend/test/auth/auth.e2e-spec.ts` — 10 tests covering register (happy + bcrypt check + 409 dup + 400 missing email + 400 short pw), login (happy + 401 wrong pw + 401 unknown email), me (401 no token + 200 with token, no passwordHash in response)
+
+#### Frontend
+- `src/lib/auth.ts` — `login()`, `register()`, `logout()`, `fetchCurrentUser()`; `authStore` for user persistence (`localStorage.kanban_user`)
+- `src/contexts/AuthContext.tsx` — React context with `{ user, loading, login, register, logout }`; on mount, if token exists, calls `/auth/me` to validate and rehydrate user; clears token on 401
+- `src/components/logo.tsx` — `KanbanSquare` icon + "Kanban" text, used in landing nav + auth layout
+- `src/components/auth/login-form.tsx` — `react-hook-form` + zod + shadcn `<Form>` with email/password fields, `<Loader2>` spinner on submit, inline `<FormMessage>` + Sonner toast on error, redirects to `/boards` on success
+- `src/components/auth/register-form.tsx` — same stack with name/email/password/confirmPassword (with `.refine` for matching); same error/success UX
+- `src/app/(auth)/layout.tsx` — two-column on `lg+` (decorative left aside with logo, tagline, Layers icon, footer; right form panel), single-column centered card on mobile. Uses `<Logo>` (hidden on `lg+` because already in aside)
+- `src/app/(auth)/login/page.tsx` + `(auth)/register/page.tsx` — `Card` with `<CardHeader>` (title + description) + `<CardContent>` (the form)
+- `src/app/boards/page.tsx` — placeholder board list page (logo, mode toggle, "Your boards" h1, "No boards yet" empty state matching DESIGN.md template, sign-out button) so auth flow has somewhere to redirect to
+- Wired `<AuthProvider>` into root `layout.tsx`
+
+#### Infrastructure fix
+- Discovered: **a local Postgres service** was already bound to port 5432 on this Windows machine (`postgres.exe` PID 7976), intercepting connections before Docker's port-forward could deliver them
+- Verified: `netstat -ano` showed two LISTENING on 5432 (one local `postgres.exe`, one Docker `com.docker.backend.exe`); `pg_hba_file_rules` inside Docker confirmed all rules are `trust`; direct `pg` connect still failed with "password authentication failed" because the OS routed to the local service
+- Fix: **moved the Docker container to host port 5433** (`docker run -p 5433:5432 ...`). Updated `backend/.env` and `backend/.env.example` to `postgresql://kanban:kanban@localhost:5433/kanban`. **Spec 11 (Docker) will be updated** to use port 5433 by default to avoid this collision on Windows machines that already have a local Postgres
+
+### Decisions
+
+#### Backend
+- **bcrypt cost 12** — industry standard; ~250ms on a modern CPU which is acceptable for login flows
+- **Same error message for both wrong-password and unknown-email** — anti user-enumeration per OWASP guidance; still hashes a dummy bcrypt to keep response time similar (timing attack mitigation)
+- **JWT payload `{ sub, email }`** — minimal; we re-fetch the user from DB on `getMe` so stale data (e.g. email change) doesn't propagate
+- **`@nestjs/jwt`'s `expiresIn` from `JWT_EXPIRES_IN` env var** (default `24h`) — makes token TTL configurable per environment without code changes
+- **`JwtStrategy` validates payload and returns it** — Passport's contract; the JWT payload becomes `req.user`
+- **`HttpCode` overrides on register (201) and login (200)** — default for POST is 201 but login should be 200 (no new resource)
+- **`/api/auth/me` returns `user` (id/email/name) NOT `passwordHash`** — service builds the safe DTO before returning
+
+#### Frontend
+- **`AuthContext` hydrates from `/auth/me`, not from localStorage alone** — a stale token (e.g. user deleted) would otherwise leave the UI thinking the user is signed in; the server check is the source of truth
+- **On `/auth/me` failure, clear the token** — prevents infinite retry loops; redirects handled by route guards in later specs
+- **Inline `<FormMessage>` AND Sonner toast** — `FormMessage` is persistent (visible after form re-renders), Sonner is transient (draws eye to action); both help different cases
+- **`router.refresh()` after redirect** — Next.js App Router cache invalidation; ensures the boards page re-fetches server state if any
+- **Two-column auth layout with decorative left aside** — premium feel per DESIGN.md "Quiet chrome, loud content"; aside has logo + Layers icon + tagline quote, not a form
+- **`Logo` component supports `href={null}`** — so it can be used as a static mark in the aside header
+- **`/boards` empty state matches DESIGN.md template exactly** — centered icon + title + description; sets the pattern for Spec 05+
+
+#### Infra
+- **Switched Docker port from 5432 → 5433** — local Postgres on this machine blocks host-side Docker Postgres; switching ports is non-destructive (just a flag change) and only affects local dev. Production deployments via docker-compose (Spec 11) won't have this conflict because containers talk to each other by service name, not by host port
+- **Updated `.env` and `.env.example` together** — `.env.example` is committed so future devs see the correct port
+
+### Files touched
+- `backend/package.json`, `package-lock.json` — modify (new deps)
+- `backend/.env`, `.env.example` — modify (port 5432 → 5433)
+- `backend/src/app.module.ts` — modify (import AuthModule)
+- `backend/src/auth/auth.module.ts`, `auth.service.ts`, `auth.controller.ts` — create
+- `backend/src/auth/dto/register.dto.ts`, `login.dto.ts` — create
+- `backend/src/auth/strategies/jwt.strategy.ts` — create
+- `backend/src/auth/guards/jwt-auth.guard.ts` — create
+- `backend/src/auth/decorators/current-user.decorator.ts` — create
+- `backend/test/auth/auth.e2e-spec.ts` — create
+- `frontend/src/lib/auth.ts` — create
+- `frontend/src/contexts/AuthContext.tsx` — create
+- `frontend/src/components/logo.tsx` — create
+- `frontend/src/components/auth/login-form.tsx` — create
+- `frontend/src/components/auth/register-form.tsx` — create
+- `frontend/src/app/layout.tsx` — modify (wrap with AuthProvider)
+- `frontend/src/app/(auth)/layout.tsx` — create
+- `frontend/src/app/(auth)/login/page.tsx` — create
+- `frontend/src/app/(auth)/register/page.tsx` — create
+- `frontend/src/app/boards/page.tsx` — create
+- `docs/iteration-log.md` — append (this entry)
+
+### Considered but rejected
+- **JWT refresh tokens** — out of scope per Spec 04; v1 uses single 24h token
+- **Email verification** — out of scope; would require email service setup
+- **Rate limiting on auth endpoints** — Spec 04 explicitly says "if time permits"; skipped for now
+- **`argon2` instead of `bcrypt`** — bcrypt is more universally supported; argon2 would be marginal improvement and adds native dep complexity
+- **Storing user in a separate JWT cookie** — `localStorage` is simpler and works with our API design; cookie auth would require CSRF protection
+- **Form library `react-hook-form` direct (no zod)** — zod gives us TS type inference + composable schemas for free; no reason not to
+- **`<form action="...">` (Server Actions)** — Spec says we use react-hook-form for client-side validation; Server Actions would couple auth to Next.js backend
+- **Putting `Logo` directly in `(auth)/layout.tsx` instead of as a component** — Logo is reused by landing nav and auth aside; component is the right call
+- **Showing `password` field's value back in error messages** — never reveal password length or content in errors
+
+### Verification
+- Backend build (`npm run build`) → ✅ Compiled successfully
+- Backend lint (`npm run lint`) → ✅ Pass
+- Backend e2e (`npm run test:e2e`) → ✅ **12/12 tests pass** (2 health + 10 auth)
+- Frontend typecheck (`npm run typecheck`) → ✅ 0 errors
+- Frontend lint (`npm run lint`) → ✅ "No ESLint warnings or errors" (after removing unused `Link` import in (auth)/layout.tsx)
+- Frontend build (`npm run build`) → ✅ 8/8 pages generated; `/boards` 4.71 kB, `/login` 3.87 kB, `/register` 4.02 kB
+- Both servers running (`backend:3001`, `frontend:3000`) → ✅
+- `GET /api/health` → ✅ `{"status":"ok","timestamp":"..."}`
+- `OPTIONS /api/auth/register` with `Origin: http://localhost:3000` → ✅ 204 with `Access-Control-Allow-Origin: http://localhost:3000`, `Access-Control-Allow-Credentials: true`
+- `GET /login` → ✅ 200; HTML contains "Welcome back" and "Sign in"
+- `GET /register` → ✅ 200; HTML contains "Create your account" and "Already have"
+
+### Known caveats
+- 13 npm vulnerabilities total across backend (now back to 13 — bcrypt and passport-jwt added a few new transitive vulns). Will audit in the cleanup commit
+- **Spec 11 (docker-compose) will need a port update** — should map container 5432 to host 5433 by default on Windows; will do that as part of Spec 11 implementation
+- **Frontend `boards/page.tsx` shows loading state on SSR** — that's by design (`useEffect` fires after hydration); the user briefly sees "Loading…" before their user info appears. Could be improved with middleware-based auth guard, but spec doesn't require it
+- **AuthContext re-fetches `/auth/me` on every page load** — fine for v1; could cache with TanStack Query later if it becomes a perf issue
+
+### Next
+- Spec 05: Boards CRUD (backend: service, controller, DTOs, role-based authorization helper + tests; frontend: boards list with create/edit/delete + premium empty state)
+- Spec 11 update: change docker-compose port mapping to 5433 to match this fix
