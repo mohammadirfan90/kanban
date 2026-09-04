@@ -11,7 +11,7 @@ export interface TaskView {
   title: string;
   description: string | null;
   position: number;
-  assigneeId: string | null;
+  assignee: { id: string; name: string; email: string } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -39,18 +39,28 @@ export class ColumnsService {
   ) {}
 
   /**
-   * Default include for column responses: tasks ordered by fractional position.
+   * Default include for column responses: tasks ordered by fractional position, with
+   * each task's assignee eager-loaded (id/name/email only — never passwordHash).
    * Prevents N+1 when a board returns its columns + their tasks.
    */
   private defaultInclude() {
     return {
       tasks: {
         orderBy: { position: 'asc' as const },
+        include: {
+          assignee: {
+            select: { id: true, name: true, email: true },
+          },
+        },
       },
     };
   }
 
-  private toColumnResponse(column: Column & { tasks: Task[] }): ColumnResponse {
+  private toColumnResponse(
+    column: Column & {
+      tasks: (Task & { assignee: { id: string; name: string; email: string } | null })[];
+    },
+  ): ColumnResponse {
     return {
       id: column.id,
       boardId: column.boardId,
@@ -63,7 +73,7 @@ export class ColumnsService {
         title: t.title,
         description: t.description,
         position: t.position,
-        assigneeId: t.assigneeId,
+        assignee: t.assignee,
         createdAt: t.createdAt.toISOString(),
         updatedAt: t.updatedAt.toISOString(),
       })),

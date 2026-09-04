@@ -51,7 +51,7 @@ export interface BoardTaskView {
   title: string;
   description: string | null;
   position: number;
-  assigneeId: string | null;
+  assignee: { id: string; name: string; email: string } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -260,7 +260,12 @@ export class BoardsService {
       columns: {
         orderBy: { position: 'asc' as const },
         include: {
-          tasks: { orderBy: { position: 'asc' as const } },
+          tasks: {
+            orderBy: { position: 'asc' as const },
+            include: {
+              assignee: { select: { id: true, name: true, email: true } },
+            },
+          },
         },
       },
     };
@@ -269,7 +274,9 @@ export class BoardsService {
   private toBoardResponse(
     board: Board & {
       members: (BoardMember & { user: Pick<User, 'id' | 'email' | 'name'> })[];
-      columns: (Column & { tasks: Task[] })[];
+      columns: (Column & {
+        tasks: (Task & { assignee: { id: string; name: string; email: string } | null })[];
+      })[];
     },
     callerRole: BoardRole,
   ): BoardResponse {
@@ -296,7 +303,7 @@ export class BoardsService {
           title: t.title,
           description: t.description,
           position: t.position,
-          assigneeId: t.assigneeId,
+          assignee: t.assignee,
           createdAt: t.createdAt.toISOString(),
           updatedAt: t.updatedAt.toISOString(),
         })),
