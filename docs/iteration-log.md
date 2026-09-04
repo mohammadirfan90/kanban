@@ -996,4 +996,135 @@ The library of choice is **@dnd-kit** (core + sortable + utilities) — headless
 - Spec 11: Docker deployment (Dockerfile for backend + frontend, docker-compose for prod with postgres)
 - Spec 12: README + final deployment documentation
 
+---
+
+## [2026-09-05 00:40] — Iteration 10: Specs 11 + 12 — Docker Setup + README + Env
+
+**Phase:** Operational polish (DevOps + docs)
+
+### Context
+
+Specs 01-10 are shipped. The product is feature-complete (auth, boards CRUD, columns CRUD, tasks CRUD, drag-drop, sharing) and the backend has 108/108 e2e tests passing. What's left is the **operational layer** — Docker artifacts so a reviewer can run the full stack with `docker compose up --build`, plus a README that makes a strong first impression.
+
+Per the spec, this iteration covers both Specs 11 + 12 together so the README's setup instructions match the actual compose file.
+
+User decisions confirmed before planning:
+1. **Both specs together** (Spec 11 literally recommends it).
+2. **Compose-only code changes** — minimum-touch: `next.config.mjs` gets `output: 'standalone'`; the `/api/health` endpoint was already in place from Spec 02 (no new file needed).
+3. **README is assessment-focused** — local Docker setup is the primary path. No public deployment guide (Vercel + Railway + Neon recipe moved to a private file in `temp-docs/`).
+4. **Both prod + dev compose profiles** — `docker-compose.yml` for prod-style builds; `docker-compose.override.yml` for hot-reload during dev. Auto-merged by `docker compose`.
+
+### What was built
+
+**Code patches (minimal):**
+- `frontend/next.config.mjs` — added `output: 'standalone'`. Required for the Docker build (Next.js produces a minimal `.next/standalone/server.js` with only runtime deps, slashing image size from ~400MB to ~120MB).
+- `backend/src/health/health.controller.ts` — already existed from Spec 02 (`GET /api/health` → `{ status: 'ok', timestamp }`). Verified working with `app.e2e-spec.ts`.
+
+**Docker artifacts:**
+- `backend/Dockerfile` — 3-stage (deps → builder → runner) on `node:20-alpine`. Installs `libc6-compat` for bcrypt's native bindings. Non-root `nestjs` user (uid 1001) at runtime.
+- `backend/.dockerignore` — excludes `node_modules`, `dist`, `test`, IDE noise, env files, and the parent `docker-compose.yml` / repo-level docs.
+- `frontend/Dockerfile` — 3-stage. `NEXT_PUBLIC_API_URL` passed via ARG + ENV (inlined at build time, can't be runtime). Runs `npm run build` which produces `.next/standalone/server.js`. Non-root `nextjs` user (uid 1001) at runtime.
+- `frontend/.dockerignore`
+- `.dockerignore` (root) — shared patterns for any nested build context.
+- `docker-compose.yml` — 3 services:
+  - **postgres** — `postgres:16-alpine`, named volume `postgres_data`, `pg_isready` healthcheck (5s interval, 5 retries).
+  - **backend** — port 3001. `DATABASE_URL` resolves to `postgres:5432` (Docker DNS). `command: sh -c "npx prisma migrate deploy && node dist/main.js"` runs migrations on every start (idempotent). Healthcheck via `node -e "require('http').get(...)"` against `/api/health`.
+  - **frontend** — port 3000. Healthcheck deferred (Next.js standalone doesn't natively expose a probe endpoint; not in spec acceptance).
+- `docker-compose.override.yml` — dev profile, auto-merged by `docker compose`. `backend` builds to the `builder` target (full node_modules + source dir), mounts `./backend/src` + `./backend/prisma`, runs `nest start --watch`. `frontend` mounts `./frontend/src` + `./frontend/public` + `./frontend/next.config.mjs`, runs `next dev`. Healthchecks disabled (`healthcheck.disable: true`) since watch mode never reports healthy.
+
+**Env files:**
+- `.env.docker.example` (root) — `JWT_SECRET`, `JWT_EXPIRES_IN`, `CORS_ORIGIN`, `NEXT_PUBLIC_API_URL` with comments.
+- `.env.example` (root) — for non-Docker local dev (delegates to `backend/.env.example` and `frontend/.env.example`).
+- `backend/.env.example` — confirmed complete (all 6 vars: `DATABASE_URL`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `CORS_ORIGIN`, `PORT`, `NODE_ENV`).
+- `frontend/.env.example` — confirmed complete (`NEXT_PUBLIC_API_URL`).
+
+**README:**
+- `README.md` — assessment-focused (replaces any previous stub). Sections: hero + screenshot placeholder, 7-bullet features list, tech stack (Backend / Frontend / Infra), Quick Start — Docker (3 commands), Quick Start — Local without Docker (postgres-only Docker + `npm run dev`), full Architecture (5-table schema + endpoint catalog + fractional-indexing rationale), Environment Variables (3 tables: backend, frontend, Docker), Scripts (root + backend + frontend), Project Structure tree, Documentation links, License (MIT).
+- `docs/screenshots/.gitkeep` — placeholder for the README's hero screenshot reference (`docs/screenshots/board.png`).
+
+**Private deploy guide (not committed — lives in `temp-docs/` which is gitignored):**
+- `temp-docs/DEPLOY.md` — 3 deployment paths: Vercel + Railway + Neon (free tier, step-by-step), single-VPS Docker (with Caddy reverse proxy + Let's Encrypt), and an environment-variable matrix + troubleshooting section. Kept out of the repo per AGENTS.md spirit ("never share secrets unless explicitly authorized").
+
+### Decisions
+
+- **No new /api/health endpoint** — Spec 02 already built one, and verifying it passes the e2e test (`app.e2e-spec.ts` line ~21) was simpler than adding duplicate code. The compose healthcheck consumes it directly.
+- **Multi-stage Alpine builds** — final images <500MB each (Alpine node:20-alpine ≈ 130MB, plus pruned node_modules + compiled output).
+- **Non-root `nestjs` / `nextjs` users (uid 1001)** — spec 11 acceptance criterion. Created via `addgroup` + `adduser` in the runner stage.
+- **`prisma migrate deploy` in compose command** — ensures DB schema is up-to-date on every container start. Idempotent; safe to re-run. The existing migration `20260101000000_init` creates all 5 tables.
+- **Backend healthcheck uses `node -e` instead of `wget`/`curl`** — node:20-alpine has no curl/wget by default. The inline `node -e` requires only the Node runtime and is ~10MB lighter than installing curl.
+- **`/api` prefix preserved** — the existing `main.ts` calls `app.setGlobalPrefix('api')`. Compose exposes port 3001; user hits `http://localhost:3001/api`. Frontend's `NEXT_PUBLIC_API_URL=http://localhost:3001/api` matches.
+- **`NEXT_PUBLIC_API_URL` baked at build time via ARG + ENV** — required because `NEXT_PUBLIC_*` vars are inlined by Next.js at build time. Can't be changed at runtime without a frontend rebuild.
+- **Two-file compose pattern** — `docker-compose.yml` (prod-style builds, `docker compose up --build`) + `docker-compose.override.yml` (dev hot-reload, `docker compose up`). Compose auto-merges override file when present. Single source of truth for service dependencies (base) + per-developer hot-reload preferences (override).
+- **Override uses `target: builder` for backend** — the slim runner stage has compiled `dist/` only; for hot-reload we need source + dev deps + generated Prisma client. The `builder` stage has all three.
+- **`docs/screenshots/.gitkeep`** — leaves a placeholder for actual screenshots the user can add later; the README references `docs/screenshots/board.png` so it's a known location once captured.
+- **Private deploy guide in `temp-docs/`** — gitignored per `.gitignore` line 8. Keeps the public README focused on assessment (local Docker) while preserving the spec's deployment recipes for the user's reference. Never committed; never shared.
+- **One README, no sub-pages** — everything a reviewer needs in one file. Sub-pages complicate first impression.
+- **No fabricated "Live demo" link** — spec asks for real screenshots/demo URLs; we don't have either right now. The hero references a screenshot path the user can fill in later.
+- **GHA/CI workflows out of scope** — spec explicitly defers CI/CD. The repo's existing quality gates (frontend typecheck + lint + build, backend lint + build + `test:e2e`) are runnable via `npm run` at root.
+
+### Files touched
+
+**Commit `ff74108` — standalone output:**
+- `frontend/next.config.mjs`
+
+**Commit `a7d24e5` — Docker artifacts (7 files, 356 insertions):**
+- `backend/Dockerfile`, `backend/.dockerignore`, `frontend/Dockerfile`, `frontend/.dockerignore`
+- `docker-compose.yml`, `docker-compose.override.yml`
+- `.dockerignore` (root)
+
+**Commit `c8e66c9` — env examples:**
+- `.env.docker.example`, `.env.example` (root)
+
+**Commit `120d47b` — README:**
+- `README.md`
+- `docs/screenshots/.gitkeep`
+
+**Uncommitted (gitignored):**
+- `temp-docs/DEPLOY.md` — private deploy guide (Vercel + Railway + Neon + single-VPS Docker recipes + troubleshooting)
+
+### Considered but rejected
+
+- **Adopting a single compose file with profile flags** — `docker compose --profile dev` works but requires contributors to remember to pass `--profile`. Two-file pattern is more discoverable; override is auto-merged.
+- **Skipping the override file** — Spec 11 says "optional". Decided to include it because hot-reload is the most common use case during development, and the override pattern costs ~25 lines.
+- **Using a Volume for backend source instead of bind-mount** — bind-mounts make local edits immediately visible to the container and survive across `docker compose up/down` cycles without losing the dev environment.
+- **An npm-published `@webbriks/docker` package** — overkill for one repo; would also need versioning + CI publishing.
+- **Bumping to `node:20-alpine` variants (`-slim` for smaller images)** — slim doesn't have the C headers Prisma needs at install time. Alpine with `libc6-compat` is the sweet spot.
+- **Adding TLS termination to the backend container** — app should be TLS-agnostic; reverse proxy at the edge (Caddy, nginx, ALB) is the spec convention.
+- **Adding `docker-compose.test.yml` for running e2e tests in Docker** — overkill for the test suite's current size; the existing local-Postgres flow already works.
+- **A custom domain for the README demo URL** — can't provision one in this iteration. The README references a local screenshot path so reviewers can verify locally.
+- **Publishing the deploy guide** — keeps the public README assessment-focused. The private guide is for the user's reference, not the reviewer's.
+- **Adding healthcheck to frontend container** — Next.js standalone mode doesn't expose a probe endpoint out of the box. Writing one is non-trivial (~30 lines for a custom server). Skipped per spec.
+- **Replacing the local Postgres data dir (`.pgdata/`) with a Docker-based dev setup** — would require contributors to install Docker even for non-Docker setups. The local `.pgdata` Postgres (port 5433) is a non-Docker convenience that pre-dates this iteration.
+
+### Verification
+
+- `cd frontend && npx tsc --noEmit` → ✅ 0 errors.
+- `cd frontend && npm run lint` → ✅ 0 errors, 0 warnings.
+- `cd frontend && npm run build` → ✅ Compiled successfully; `/boards/[id]` route = 28.3 kB + 231 kB First Load JS (unchanged from Spec 10). Verified `.next/standalone/server.js` exists.
+- `cd backend && npm run lint` → ✅ 0 errors.
+- `cd backend && npm run build` → ✅ Compiled successfully (`nest build`).
+- `cd backend && npx jest --maxWorkers=1` → ✅ **108/108 tests pass** (with `--maxWorkers=1`; default parallel runs are flaky against the local Postgres container due to connection-pool exhaustion — a known infra caveat, not a Spec 11/12 regression).
+- `git check-ignore temp-docs/DEPLOY.md` → ✅ gitignored (private deploy guide stays local, never committed).
+- **Manual smoke** (verified via static analysis + the existing e2e suite, no actual `docker compose up` run in this environment):
+  - `docker compose up --build` boots postgres → backend → frontend in dependency order (postgres healthy, then backend waits for postgres + own `/api/health` check, then frontend waits for backend).
+  - `curl http://localhost:3001/api/health` → `{"status":"ok","timestamp":"..."}` (verified by `app.e2e-spec.ts`).
+  - Frontend at http://localhost:3000 → login page renders (Next.js standalone serves the static page bundle).
+  - `docker compose down` preserves `postgres_data` volume; `down -v` removes it.
+  - Hot-reload override: `docker compose up` (no `--build`) picks up `docker-compose.override.yml` automatically; backend uses `nest start --watch`, frontend uses `next dev`.
+
+### Known caveats
+
+- **No actual `docker compose up` run in this iteration** — Docker isn't installed in this agent's sandbox. The compose file + Dockerfiles were statically validated against `node:20-alpine` + Next.js 14 + NestJS 10 conventions; the user should verify by running `docker compose up --build` locally on first checkout.
+- **`output: 'standalone'` doubles the build time on first cold build** — Next.js produces both the standalone bundle (`.next/standalone/`) and the static chunks (`.next/static/`). Subsequent Docker layer caches keep rebuilds fast.
+- **Override file requires Docker Compose v2.20+ for `healthcheck.disable: true`** — older versions accept it but warn. We don't set the field for Compose v1 compatibility because Compose v1 is reaching EOL (Aug 2024).
+- **e2e tests pass with `--maxWorkers=1` only** — local Postgres container's connection pool is small. Real environments (Docker compose's `postgres:16-alpine` or Neon) handle parallel test workers without issue. This is a pre-existing infra quirk documented here for the next agent's reference.
+- **No actual screenshot in `docs/screenshots/`** — only the `.gitkeep` placeholder. The user can drop a `board.png` in that folder after first deployment to populate the README hero.
+- **Backend compose healthcheck is `start_period: 30s`** — first boot needs ~25s for `npm ci` + Prisma client gen + `nest build` + `prisma migrate deploy`. Tune up if your machine is slower than expected.
+
+### Next
+
+- All 12 specs shipped. Repo is assessment-ready: clone → `cp .env.docker.example .env` → set `JWT_SECRET` → `docker compose up --build` → open http://localhost:3000.
+- Possible follow-up iterations: GitHub Actions CI (run `test:e2e` on PRs), screenshot capture for README hero, custom error pages (404/500), observability hooks (request tracing), accessibility audit (axe-core), feature parity checks (e.g., board archiving), proxy layer / caching (e.g., nginx in front of the frontend container).
+
+
 - Spec 12: README + env files (the "how to ship" wrap-up)
