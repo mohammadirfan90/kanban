@@ -2,7 +2,7 @@
 
 A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on the backend and Next.js + shadcn/ui on the frontend.
 
-![Kanban board screenshot](docs/screenshots/board.png)
+![Registration page](docs/screenshots/register.png)
 
 ## Features
 
