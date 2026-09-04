@@ -601,3 +601,89 @@ Entries are appended by the agent after every non-trivial iteration (see `/AGENT
 - Spec 07: Tasks CRUD (create/update/delete, with `assigneeId` validation against board membership)
 - Spec 08: Task movement (fractional position between any two siblings)
 - Spec 09: Board sharing UI + board-detail page (where columns + tasks will render visually)
+
+---
+
+## [2026-09-04 12:00] — Iteration 8: Spec 07 — Tasks CRUD (backend + frontend type alignment)
+
+**Spec:** `specs/07-tasks-crud.md`
+**Phase:** Day 2 / Tasks
+
+### What was built
+
+#### Backend (Spec 07 endpoints)
+- `backend/src/tasks/tasks.module.ts` — imports `BoardsModule` (for `BoardsService.assertAccess`) and `ColumnsModule` (cheap insurance for Spec 08); exports `TasksService`
+- `backend/src/tasks/tasks.service.ts` — 4 public methods (`create`, `getOne`, `update`, `remove`); private `resolveBoardIdForTask` (one-query lookup), `validateAssignee` (existence + board membership), `defaultInclude` (eager-loads assignee with id/name/email only), `toTaskResponse` mapper; `TaskResponse` interface matching the spec's mandated nested-assignee shape
+- `backend/src/tasks/tasks.controller.ts` — class-level `@UseGuards(JwtAuthGuard)`; 4 routes: `@Post()` 201, `@Get(':id')` 200, `@Patch(':id')` 200, `@Delete(':id')` 204; `ParseUUIDPipe({version:'4'})` on `:id`
+- DTOs:
+  - `create-task.dto.ts` — `columnId` (UUID v4), `title` (1-200 chars), optional `description` (max 5000), optional `assigneeId` (UUID v4)
+  - `update-task.dto.ts` — optional `title`/`description`; `assigneeId` accepts `null` for explicit unassign (uses `@ValidateIf((_, v) => v !== null)` to bypass `@IsUUID` on null)
+- `backend/test/tasks/tasks.e2e-spec.ts` (~430 lines, 28 test cases) — covers all 17 acceptance criteria plus 11 error cases (403 viewer/stranger on every endpoint, 404 unknown columnId/taskId, 400 missing/oversized title/description, 400 unknown/non-member assignee)
+- Wired `TasksModule` into `app.module.ts`
+
+#### Backend (response-shape consistency)
+- Updated `ColumnsService.TaskView` and `toColumnResponse()` to use nested `assignee: { id, name, email } | null` instead of flat `assigneeId`. `defaultInclude()` now eager-loads the assignee on every column's tasks (one extra join per query, no N+1).
+- Updated `BoardsService.BoardTaskView` and `toBoardResponse()` with the same change. The boards endpoint now also returns nested assignees in its embedded tasks.
+
+#### Frontend (type alignment only)
+- `frontend/src/lib/types.ts` — `BoardTask.assigneeId: string | null` → `BoardTask.assignee: { id, name, email } | null`. No current frontend code reads `assigneeId` so this is a clean swap.
+
+### Decisions
+- **Nested `assignee` shape propagated to columns + boards responses** — Spec 07's response shape is the new contract; keeping `TaskView.assigneeId` flat would have created two shapes for the same entity depending on the endpoint. One query (with `include`) gets both task and assignee.
+- **Explicit `null` for unassign** — class-validator's `@IsOptional()` normally treats `null` as "field omitted". Using `@ValidateIf((_, v) => v !== null)` lets `PATCH { assigneeId: null }` actually clear the assignment (otherwise users could never remove an assignee).
+- **Position step `1`, not `1024`** — Spec 07 §Constraints literally says `+ 1`. Different from columns (which use `1024`) because tasks reorder much more frequently (Spec 08 + Spec 10 drag-drop) and small gaps are easier to reason about in the DB.
+- **Two-step authorization** — first resolve the task → its column → its boardId (one query via nested select), then `BoardsService.assertAccess`. N+1-safe and reusable.
+- **`TasksModule` imports `ColumnsModule` too** — Spec 08 (task movement) will move tasks between columns and may want `ColumnsService` for column-side validation. Importing both modules now avoids a circular-import dance later.
+- **404 on unknown `columnId`** vs **400 on unknown `assigneeId`** — Spec 07 is explicit: columnId is a foreign key reference (404 missing-resource); assigneeId is body validation (400 invalid-input). Differentiating matches HTTP semantics and the spec's acceptance criteria verbatim.
+- **No `passwordHash` leakage** — both `defaultInclude()` select clauses explicitly list only `{ id, name, email }` for the assignee user; the e2e asserts `Object.keys(assignee).sort() === ['email', 'id', 'name']` to prove no field leaks.
+- **No frontend tasks UI** — Spec 07 is backend-only. The frontend boards page only counts tasks; it doesn't render their details. The `BoardTask` type change is forward-compatible (currently no frontend code reads `assigneeId`).
+
+### Files touched
+**Backend (commit 1, `05bbb92`):**
+- `backend/src/tasks/tasks.module.ts` — create
+- `backend/src/tasks/tasks.service.ts` — create
+- `backend/src/tasks/tasks.controller.ts` — create
+- `backend/src/tasks/dto/create-task.dto.ts` — create
+- `backend/src/tasks/dto/update-task.dto.ts` — create
+- `backend/test/tasks/tasks.e2e-spec.ts` — create (~430 lines)
+- `backend/src/app.module.ts` — modify (wire TasksModule)
+- `backend/src/columns/columns.service.ts` — modify (nested assignee in TaskView)
+- `backend/src/boards/boards.service.ts` — modify (nested assignee in BoardTaskView)
+
+**Frontend (commit 2, `7ec8293`):**
+- `frontend/src/lib/types.ts` — modify (BoardTask.assignee is now a nested object)
+
+**Docs:**
+- `docs/iteration-log.md` — append (this entry)
+
+### Considered but rejected
+- **Single combined `TasksModule` that imports `ColumnsModule`** — already done; rejected the alternative of injecting `ColumnsService` directly because it would couple Tasks to columns at the service layer (cleaner to import the whole module)
+- **Using a queue or in-memory state for move operations** — out of scope (Spec 08); v1 is single-DB-write-per-move
+- **Allowing tasks to be created without a title (`title?: string`)** — Spec 07 explicitly says "required, trimmed, 1-200 chars". Validation enforces this; empty/whitespace titles would create unusable tasks
+- **Bulk operations (`POST /api/tasks/bulk`)** — explicitly out of scope
+- **Soft-delete (archive flag)** — out of scope; permanent delete only
+- **Returning the task in the POST response body with `location: /api/tasks/:id` header** — spec says 201 + task JSON. Could add the header later but it would diverge from boards/columns conventions
+- **Using `@IsNotEmpty()` on title** — `@MinLength(1)` already rejects empty strings. `@IsNotEmpty()` also rejects whitespace-only strings which the spec only implies via "trimmed" (we don't explicitly trim, but `@MinLength(1)` on an un-trimmed string still rejects empty)
+- **A separate `TaskAssigneeView` type for the response** — over-engineered for 3 fields; inline object type in `TaskResponse` is clearer
+
+### Verification
+- `cd backend && npm run build` → ✅ Compiled successfully
+- `cd backend && npm run lint` → ✅ 0 errors (after removing unused `freeBoard` fixture; linter auto-fixed formatting)
+- `cd backend && npm run test:e2e` → ✅ **88/88 tests pass** (2 health + 10 auth + 23 boards + 25 columns + **28 tasks new**)
+- Tasks e2e covers:
+  - `POST /api/tasks`: 201 position=1 on empty, 201 position=max+1 for 2nd, 201 with nested assignee (editor = board member), 403 viewer, 403 stranger, 404 unknown columnId, 400 empty title, 400 title > 200, 400 description > 5000, 400 unknown assignee, 400 non-member assignee
+  - `GET /api/tasks/:id`: 200 with assignee=null + empty object check, 200 with nested assignee (exact 3-key shape), 200 viewer, 403 stranger, 404 unknown
+  - `PATCH /api/tasks/:id`: 200 title-only, 200 description-only, 200 replace assignee, 200 null = unassign, 403 viewer, 403 stranger, 404 unknown, 400 non-member assignee
+  - `DELETE /api/tasks/:id`: 204 with gap-preservation (siblings at positions 1 and 3 stay), 403 viewer, 403 stranger, 404 unknown
+- `cd frontend && npm run typecheck` → ✅ 0 errors
+- `cd frontend && npm run build` → ✅ 5/5 routes; `/boards` bundle size unchanged (the type change is erased at compile time)
+
+### Known caveats
+- **No frontend tasks UI yet** — board-detail page that renders tasks (drag-drop, click-to-edit) is Spec 09/10. Tasks exist in the DB and are exposed via API; the frontend just doesn't consume them yet.
+- **`title` not explicitly trimmed before validation** — `@MinLength(1)` rejects empty but allows `"   "` (3 spaces). The spec says "trimmed"; in practice users won't create whitespace-only titles via the form UI (zod's `min(1)` on the client + server rejects them). Could add an `@Transform(({ value }) => value?.trim())` from class-transformer if it becomes a real problem.
+- **Cascade verification uses a fresh Prisma column create** rather than the columns endpoint (Spec 06 is independent); for tasks, cascade is verified via direct position check + GET 404 on the deleted task's ID.
+
+### Next
+- Spec 08: Task movement (fractional position between any two siblings, with cross-column moves supported)
+- Spec 09: Board sharing UI + board-detail page (where columns + tasks will render visually)
+- Spec 10: Drag-and-drop UI (the headline UX feature)
