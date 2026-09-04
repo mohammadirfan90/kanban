@@ -10,13 +10,14 @@ export interface User {
   updatedAt: string;
 }
 
-/** A single task as returned by the boards endpoint. */
+/** A single task as returned by the boards/tasks endpoints. */
 export interface BoardTask {
   id: string;
   title: string;
   description: string | null;
   position: number;
-  assigneeId: string | null;
+  /** Nested assignee object (id/name/email only); null when unassigned. */
+  assignee: { id: string; name: string; email: string } | null;
   createdAt: string;
   updatedAt: string;
 }
