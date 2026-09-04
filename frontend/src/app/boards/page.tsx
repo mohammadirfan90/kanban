@@ -297,58 +297,75 @@ function BoardsGrid({ boards, onEdit, onDelete }: BoardsGridProps) {
         const isOwner = b.role === 'OWNER';
         const taskCount = b.columns.reduce((sum, c) => sum + c.tasks.length, 0);
         const updated = new Date(b.updatedAt);
+        // Stop the wrapping <Link> from navigating when an action button is clicked.
+        const stop = (e: React.MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+        };
         return (
-          <Card key={b.id} className="flex flex-col p-6 transition-shadow hover:shadow-sm">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <h3 className="truncate text-base font-semibold tracking-tight">{b.title}</h3>
-                {b.description && (
-                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                    {b.description}
-                  </p>
-                )}
+          <Link
+            key={b.id}
+            href={`/boards/${b.id}`}
+            className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-xl"
+          >
+            <Card className="flex flex-col p-6 transition-shadow hover:shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <h3 className="truncate text-base font-semibold tracking-tight">{b.title}</h3>
+                  {b.description && (
+                    <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                      {b.description}
+                    </p>
+                  )}
+                </div>
+                <RoleBadge role={b.role} />
               </div>
-              <RoleBadge role={b.role} />
-            </div>
 
-            <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1">
-                <Users className="h-3.5 w-3.5" />
-                {b.members.length} {b.members.length === 1 ? 'member' : 'members'}
-              </span>
-              <span className="tabular-nums">
-                {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
-              </span>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">
-                Updated {updated.toLocaleDateString()}
-              </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Edit ${b.title}`}
-                  title="Edit"
-                  onClick={() => onEdit(b)}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Delete ${b.title}`}
-                  title={isOwner ? 'Delete' : 'Only the owner can delete'}
-                  disabled={!isOwner}
-                  onClick={() => onDelete(b)}
-                  className="hover:text-destructive disabled:hover:text-current"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+              <div className="mt-4 flex items-center gap-4 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1">
+                  <Users className="h-3.5 w-3.5" />
+                  {b.members.length} {b.members.length === 1 ? 'member' : 'members'}
+                </span>
+                <span className="tabular-nums">
+                  {taskCount} {taskCount === 1 ? 'task' : 'tasks'}
+                </span>
               </div>
-            </div>
-          </Card>
+
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">
+                  Updated {updated.toLocaleDateString()}
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Edit ${b.title}`}
+                    title="Edit"
+                    onClick={(e) => {
+                      stop(e);
+                      onEdit(b);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Delete ${b.title}`}
+                    title={isOwner ? 'Delete' : 'Only the owner can delete'}
+                    disabled={!isOwner}
+                    onClick={(e) => {
+                      stop(e);
+                      onDelete(b);
+                    }}
+                    className="hover:text-destructive disabled:hover:text-current"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </Link>
         );
       })}
     </div>
