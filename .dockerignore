@@ -1,0 +1,46 @@
+# Patterns shared by ALL Docker build contexts. Most services have
+# their own .dockerignore at the build context root, but some tooling
+# walks up to find this file.
+
+.git
+.gitignore
+
+# Tooling / agent runtime.
+.puku
+.puku-cli
+.agents
+.venv-pdf
+
+# Local Postgres data dir (mounted into Docker; ephemeral).
+.pgdata
+
+# Docs and references (kept local, not for the repo).
+temp-docs
+
+# Env files — use .env.example / .env.docker.example instead.
+.env
+.env.local
+.env.*.local
+
+# Logs and coverage.
+*.log
+coverage
+.nyc_output
+
+# Node / TypeScript build outputs (rebuilt in the image).
+node_modules
+dist
+.next
+*.tsbuildinfo
+
+# OS / IDE noise.
+.DS_Store
+Thumbs.db
+.vscode
+.idea
+
+# Docker metadata.
+docker-compose.yml
+docker-compose.override.yml
+Dockerfile
+.dockerignore

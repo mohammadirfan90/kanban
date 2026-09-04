@@ -1,0 +1,45 @@
+# Keep the build context small by excluding everything that's
+# rebuilt from source. Mirrors the patterns in backend/.gitignore.
+
+# Dependencies — installed in the deps stage.
+node_modules
+
+# Build output — also rebuilt in the builder stage.
+dist
+
+# Tests — not needed in the image.
+test
+coverage
+*.spec.ts
+*.test.ts
+jest.config.js
+tsconfig.build.json
+
+# Local env + IDE + OS noise.
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.vscode
+.idea
+
+# Prisma local data + tooling (only migrations + schema ship).
+prisma/dev.db
+prisma/dev.db-journal
+
+# Docker artifacts.
+Dockerfile
+.dockerignore
+
+# Repo-level files that shouldn't leak into the image.
+..git
+..docs
+..specs
+..DESIGN.md
+..AGENTS.md
+..temp-docs
+..docker-compose.yml
+..docker-compose.override.yml
+..env.docker.example
+..dockerignore

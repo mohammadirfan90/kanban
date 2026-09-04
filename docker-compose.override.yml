@@ -1,0 +1,42 @@
+# Development override — auto-merged by `docker compose` when present.
+# Lets contributors run the full stack with hot-reload:
+#   docker compose up
+# (override is picked up automatically; no -f needed).
+#
+# Differences from docker-compose.yml:
+#   - Source code is bind-mounted so saves reload instantly.
+#   - Backend runs `nest start --watch` instead of compiled node.
+#   - Frontend runs `next dev` instead of the standalone server.
+#   - Healthchecks are dropped (watch mode never reaches "healthy").
+#   - Ports stay the same so the local dev experience matches prod.
+
+services:
+  backend:
+    build:
+      # Build only up to the `builder` stage (has full node_modules +
+      # generated Prisma client + bind-mount-ready source dir).
+      target: builder
+    command: sh -c "npx prisma migrate deploy && npx nest start --watch"
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/prisma:/app/prisma
+    environment:
+      NODE_ENV: development
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    # Override the prod entrypoint by running next dev against the
+    # bind-mounted source.
+    command: sh -c "npx next dev -p 3000 -H 0.0.0.0"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/next.config.mjs:/app/next.config.mjs
+    environment:
+      NODE_ENV: development
+    depends_on:
+      - backend
