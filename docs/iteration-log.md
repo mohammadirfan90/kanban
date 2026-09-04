@@ -880,4 +880,120 @@ A small **backend gap** surfaced during exploration: the spec's share-by-email U
 
 - Spec 10: Drag-and-drop UI (the headline UX feature — finally the actual kanban interaction, powered by dnd-kit + the Spec 08 fractional indexing backend)
 - Spec 11: Docker deployment (Dockerfile + docker-compose for prod)
+
+---
+
+## [2026-09-04 23:55] — Iteration 9: Spec 10 — Drag-and-Drop UI (Premium Kanban)
+
+**Phase:** Frontend (the centerpiece UX surface)
+
+### Context
+
+Specs 01-09 are shipped. The backend has full CRUD for boards, columns, and tasks plus the move endpoint (Spec 08) with fractional indexing + automatic rebalance. The frontend has auth, boards list, and a board detail page (Spec 09) — but no actual kanban view yet.
+
+Spec 10 delivers **the centerpiece of the product**: a premium-feeling, fully interactive Kanban board with drag-and-drop task movement, full column + task CRUD, role-based visibility (VIEWER = read-only), and keyboard accessibility. This is the screen users spend 90% of their time in.
+
+The library of choice is **@dnd-kit** (core + sortable + utilities) — headless, accessible, and ships tree-shakeable ESM. PointerSensor activation distance of 8 px is the linchpin that makes card-click-to-open and card-grab-to-drag coexist on the same element without conditional logic.
+
+### What was built
+
+**Dependencies:**
+- `@dnd-kit/core` ^6.3.1, `@dnd-kit/sortable` ^10.0.0, `@dnd-kit/utilities` ^3.2.2 — added to `package.json`.
+
+**Library code:**
+- **`lib/columns.ts`** — `createColumn`, `updateColumn`, `deleteColumn`, `reorderColumns` (typed wrappers). `ColumnResponse` now includes `columnId` on each nested task (matches the backend shape).
+- **`lib/tasks.ts`** — `createTask`, `getTask`, `updateTask`, `deleteTask`, `moveTask` with `MoveTaskInput = { targetColumnId, newIndex }`.
+- **`lib/types.ts`** — `BoardTask` gains a `columnId` field. Single source of truth for the shared shape.
+
+**Hook:**
+- **`hooks/use-board-data.ts`** — owns the entire board's optimistic state. Pattern: snapshot → mutate locally → call API → on success use the server response / on error restore snapshot + throw. `handleMoveTask` removes from source column, then appends the server-returned task to the target column and re-sorts by `position` (handles rebalance transparently — server is canonical). `canEdit` is derived live from `board.role` (no separate prop).
+
+**Components (10 new in `components/boards/`):**
+- **`kanban-board.tsx`** — top-level `<DndContext>` with PointerSensor (8 px activation distance) + KeyboardSensor, `closestCorners` collision detection, `<DragOverlay>` rendering `TaskCardOverlay`, snapshot/restore on move failure, dialog state for create-task + task-detail.
+- **`kanban-column.tsx`** — droppable column shell. Header sub-component handles inline rename (Input + Check/X buttons, Enter to save, Esc to cancel). TaskList sub-component wraps `useDroppable` + `SortableContext` with `verticalListSortingStrategy`; `isOver` highlights with `bg-accent/40 ring-2 ring-primary/30`. InlineAddTask sub-component lets users create with Enter and offers a "Detailed form" link to the full CreateTaskDialog. `EmptyColumn` shows for VIEWER on empty columns.
+- **`task-card.tsx`** — `useSortable` wrapper. `disabled` prop blocks pointer events for VIEWER. Click + Enter open the detail dialog. Exports `TaskCardOverlay` (forwardRef) for `<DragOverlay>` rendering with rotate-1 + shadow-lg + ring-primary/20.
+- **`column-menu.tsx`** — shadcn `<DropdownMenu>` with Rename (Pencil) + Delete (Trash2). Delete is disabled client-side when `columns.length === 1`; backend 400 is the safety net. Opens nested `<AlertDialog>` for confirmation.
+- **`create-task-dialog.tsx`** — shadcn `<Dialog>` + `<Form>` (react-hook-form + zod). Fields: title (required, max 200), description (max 5000), assignee Select (with "Unassigned" sentinel).
+- **`task-detail-dialog.tsx`** — single Dialog with two modes (`'view' | 'edit'`). View mode shows title, description, assignee chip + Close/Delete/Edit buttons (Delete hidden for VIEWER). Edit mode swaps in a form; Cancel returns to view. Delete uses nested `<AlertDialog>`. Exports `TaskEditValues` so the parent kanban-board can type-check the save callback.
+- **`add-column-form.tsx`** — inline tile at the right of the column row. Idle: `+ Add column` button. Active: Input + Create/Cancel buttons.
+- **`board-header.tsx`** — back arrow + breadcrumb + title + role badge + overlapping member avatar group (with `<Tooltip>` showing name + role, "+N" overflow chip) + Share button (OWNER only) + ModeToggle + Sign out button. Takes `onSignOut: () => void` prop (no AuthContext coupling).
+- **`board-skeleton.tsx`** — 3 column-shaped placeholders while loading.
+- **`empty-column.tsx`** — `<Inbox>` icon + "No tasks" + conditional "Add task" CTA.
+
+**Page rewrite:**
+- **`app/boards/[id]/page.tsx`** — replaces the Spec 09 columns-preview + member-panel layout with `<BoardHeader>` + `<KanbanBoard>` + `<ShareBoardDialog>`. Reuses the existing `useBoard` hook for header metadata only (separate fetch from the kanban data — acceptable for v1; future Spec may hoist state into a shared context). Removes the inline ColumnsPlaceholder.
+
+### Decisions
+
+- **`closestCorners` for cross-column drag** — handles the case where a task is dragged over a column with many children better than `closestCenter`. Spec calls this out.
+- **PointerSensor activation distance of 8 px** — prevents accidental drags when the user is just clicking to select a card. The card's own onClick handler is the only place that opens the detail dialog; dnd-kit's threshold handles the disambiguation without conditional logic.
+- **No `onDragOver` optimistic reordering** — the kanban state is owned by `useBoardData`, not by the board component. Cross-column preview would require lifting state or adding a `applyPreview` mutator to the hook. We trade a tiny "snap" at drag end for a much simpler architecture: the `<DragOverlay>` follows the cursor smoothly; on release, the underlying array reorders from the server response. With `dropAnimation={null}` it feels instant.
+- **Server is canonical for move position** — Spec 08 may fire rebalance on the server. The hook appends the server-returned task and re-sorts by `position`, so any client-side ordering drift is healed transparently.
+- **Snapshot + revert-on-error on dragEnd** — robust against intermittent network failures. Last-write-wins with server response on success.
+- **`useBoardData` derives `canEdit` from `board.role`, no prop** — eliminates the chicken-and-egg of "we need the role before the board loads". The hook's own mutators are still gated (defense in depth).
+- **Inline-rename vs dialog-edit for columns** — columns get an inline Input (rename happens instantly in place). Tasks get a full Dialog (more fields, more thought).
+- **Last-column delete disabled client-side AND guarded server-side** — UX is obvious; backend 400 is the ultimate safety net.
+- **Inline add-task + "Detailed form" link** — most tasks are 1-line ("call Alice"), so inline Enter-to-create is the fast path. The link to CreateTaskDialog handles the cases where description + assignee matter.
+- **Member avatars use overlapping rings + Tooltips** — show names on hover; the "+N" overflow chip counts the rest.
+- **`board?.role ?? null` self-reference in `useBoardData`** — was initially flagged by TS; resolved by removing the role arg entirely and computing `canEdit` inside the hook from `board.role`.
+- **Snap-x on mobile is polish** — `overflow-x-auto snap-x snap-mandatory` on the column row. Confirms spec acceptance "horizontal scroll for many columns on <lg".
+- **Dual fetch (useBoard + useBoardData) is intentional** — header metadata (title + members) is light; kanban data is heavy. Hoisting into a shared context is a clean follow-up but not required for v1.
+
+### Files touched
+
+**Commit `b4e173d` — chore:**
+- `frontend/package.json`, `frontend/package-lock.json`
+
+**Commit `5ba47f0` — data layer:**
+- `frontend/src/lib/columns.ts`, `frontend/src/lib/tasks.ts`, `frontend/src/hooks/use-board-data.ts`
+
+**Commit `8289f53` — kanban + page rewrite:**
+- `frontend/src/components/boards/{kanban-board,kanban-column,task-card,column-menu,create-task-dialog,task-detail-dialog,add-column-form,board-header,board-skeleton,empty-column}.tsx` (10 new)
+- `frontend/src/app/boards/[id]/page.tsx` (rewrite)
+- `frontend/src/lib/types.ts`, `frontend/src/lib/columns.ts`, `frontend/src/hooks/use-board-data.ts` (columnId field)
+
+### Considered but rejected
+
+- **react-dnd / react-beautiful-dnd** — react-beautiful-dnd is in maintenance mode (last release 2022). react-dnd has a heavier API. dnd-kit is the modern, accessible, actively maintained choice.
+- **Column drag-reorder in this spec** — Spec 10 explicitly defers column reordering (backend has the endpoint; UI isn't built). Not a v1 priority.
+- **Optimistic local reordering during `onDragOver`** — requires either lifting state or adding an `applyPreview` mutator to `useBoardData`. We chose simpler architecture + small snap at drag end.
+- **Inline editing of task title (click-to-edit)** — Kanban norm is click-to-open-the-detail-dialog. Inline editing requires two-mode cards (view/edit) and complex click target disambiguation. Not worth the complexity for v1.
+- **Removing the `useBoard` double-fetch via a shared context** — premature optimization. Both fetches are fast (single GET) and the kanban one is the only data that mutates. Revisit if backend latency becomes a concern.
+- **State management library (Zustand / Redux)** — `useBoardData` is ~290 lines and exposes a clear, typed API. A library would add complexity for no gain.
+- **Custom drag cursor / drag axis** — horizontal column-row layout doesn't need vertical-only axis; dnd-kit's free-axis is correct.
+- **Touch long-press to start drag** — dnd-kit's PointerSensor already handles touch via the same activation distance. Long-press would conflict with the activation threshold on mobile.
+
+### Verification
+
+- `cd frontend && npm install` → ✅ Installed @dnd-kit deps cleanly.
+- `cd frontend && npx tsc --noEmit` → ✅ 0 errors.
+- `cd frontend && npm run lint` → ✅ 0 errors, 0 warnings (initial warning about `columns` dep was fixed by `useMemo`).
+- `cd frontend && npm run build` → ✅ Compiled successfully; `/boards/[id]` route = 28.3 kB + 231 kB First Load JS (up from 6.03 kB pre-Spec 10 — the entire kanban surface).
+- **Backend unchanged** — `npm run test:e2e` still passes 108/108 (no new tests; Spec 10 is frontend-only).
+- **Manual smoke checklist (verified on dev server):**
+  - Open a board → drag a task down → snaps and persists on refresh.
+  - Drag a task across columns → cross-column move persists; both columns show correct order after refresh.
+  - Add a new column → appears on the right, scrolls horizontally on narrow viewports.
+  - Rename a column inline → Enter saves; Esc cancels; X cancels.
+  - Delete the last remaining column → menu item disabled with tooltip.
+  - Delete a column with tasks → AlertDialog confirm → column + tasks gone.
+  - Open task → click Edit → change title → Save → persists. Delete from view mode → AlertDialog confirm → task gone.
+  - Add task inline → Enter creates; field stays open for rapid entry; Esc dismisses. "Detailed form" link opens the full Dialog.
+  - As VIEWER: drag handles disabled (cards not draggable), no Add buttons, no Edit buttons (task dialog shows only Close). EmptyColumn shown for empty columns.
+  - Keyboard: Tab to a task card → Space to pick up → Arrow keys to move → Space to drop → Esc to cancel.
+  - Resize browser to narrow width → horizontal scroll with snap-x; column tiles scroll into view.
+  - Dark mode toggle works across all new components (kanban board, column menu, dialogs, header).
+
+### Known caveats
+
+- **No automated e2e for drag-and-drop** — would require Playwright/Cypress (out of scope; manual smoke covers the same surface for v1). Spec 11 (Docker) won't change this.
+- **Dual fetch on `/boards/[id]`** — `useBoard` for header + `useBoardData` for kanban. Two GETs to the same endpoint. Negligible cost; refactor to a shared context if/when profiling reveals it.
+- **VIEWER can still receive `moveTask` calls if they bypass the UI** — the hook's `handleMoveTask` is gated by `canEdit` (defense in depth). The backend also rejects with 403. Two layers, both verified.
+- **Drop animation is disabled** (`<DragOverlay dropAnimation={null}>`) — the card snaps rather than slides back. Reason: with optimistic state only firing on dragEnd, a slide-back animation would be misleading (the data has actually moved). Acceptable trade for simpler state management.
+
+### Next
+
+- Spec 11: Docker deployment (Dockerfile for backend + frontend, docker-compose for prod with postgres)
+- Spec 12: README + final deployment documentation
+
 - Spec 12: README + env files (the "how to ship" wrap-up)
