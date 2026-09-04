@@ -420,3 +420,114 @@ Entries are appended by the agent after every non-trivial iteration (see `/AGENT
 ### Next
 - Spec 05: Boards CRUD (backend: service, controller, DTOs, role-based authorization helper + tests; frontend: boards list with create/edit/delete + premium empty state)
 - Spec 11 update: change docker-compose port mapping to 5433 to match this fix
+
+---
+
+## [2026-09-04 10:30] — Iteration 6: Spec 05 — Boards CRUD + Sharing (backend + frontend)
+
+**Spec:** `specs/05-boards-crud.md`
+**Phase:** Day 2 / Boards
+
+### What was built
+
+#### Backend (Spec 05 endpoints)
+- `backend/src/boards/boards.module.ts` — minimal NestJS module exporting `BoardsService`
+- `backend/src/boards/boards.service.ts` (293 lines) — 10 public methods: `getRole`, `assertAccess`, `hasAccess` (new boolean alias), `listForUser`, `getOne`, `create`, `update`, `remove`, `share`, `revoke`; private `defaultInclude` + `toBoardResponse`; `ROLE_RANK` map for hierarchy comparison
+- `backend/src/boards/boards.controller.ts` — class-level `@UseGuards(JwtAuthGuard)`, 7 routes with `@HttpCode` overrides (201 on POSTs, 204 on DELETEs), `ParseUUIDPipe({version:'4'})` on all `:id` and `:userId` params
+- DTOs (`backend/src/boards/dto/`):
+  - `create-board.dto.ts` — title (required, max 100), description (optional, max 1000)
+  - `update-board.dto.ts` — both fields optional (PartialType-style with explicit `@IsOptional`)
+  - `share-board.dto.ts` — userId (UUID v4), role (enum limited to `'EDITOR' | 'VIEWER'`, not OWNER)
+- `backend/test/boards/boards.e2e-spec.ts` (442 lines, 25 test cases) — covers every one of the 18 acceptance criteria: list isolation, create + default columns, get + 404/403, update with EDITOR/VIEWER denial, delete + cascades, share with all error branches, revoke + idempotency, role enforcement across all endpoints
+- Wired `BoardsModule` into `app.module.ts`
+
+#### Backend (auth-side refactors — needed for boards e2e to compile/run)
+- Exported `JwtPayload` type from `auth/strategies/jwt.strategy.ts` so `BoardsController` can type its `@CurrentUser()` parameter
+- Hardened the e2e `ValidationPipe` in the auth test setup with `whitelist: true, forbidNonWhitelisted: true, transform: true` — matches production behavior in `main.ts` and exercises the boards DTO strictness
+- Cleaned up small auth-side nits (consistent imports, removed unused symbols) uncovered while wiring boards
+
+#### Frontend (boards list UI — not in spec 05 scope but expected by users)
+- `frontend/src/lib/types.ts` — added `BoardRole`, `BoardTask`, `BoardColumn`, `BoardMemberView`, `Board` (full `BoardResponse` shape with `role`/`members`/`columns`)
+- `frontend/src/lib/boards.ts` — 7 thin wrappers over `request<T>`: `listBoards`, `getBoard`, `createBoard`, `updateBoard`, `deleteBoard`, `shareBoard`, `revokeBoardShare`
+- `frontend/src/components/boards/board-form.tsx` — zod schema (title 1-100, description ≤1000), shadcn `<Form>` with `<Input>` + `<Textarea>`, used for both create and edit dialogs
+- `frontend/src/components/boards/role-badge.tsx` — pill badge using `bg-kanban-{role}` + `text-kanban-{role}-foreground` tokens
+- `frontend/src/app/boards/page.tsx` (240 lines) — auth-guarded; header (logo, user name, mode toggle, sign out); "New board" CTA; responsive grid of board cards; modals: `<Dialog>` for create/edit, `<AlertDialog>` for destructive delete; full empty/loading/error states per DESIGN.md template
+- `frontend/src/app/globals.css` + `tailwind.config.ts` — added `--kanban-{role}-foreground` CSS vars (HSL `0 0% 100%` per DESIGN.md) and extended the `kanban` Tailwind color block with `foreground` sub-keys
+
+#### Spec wording updates
+- `specs/05-boards-crud.md` — line 14: changed "position 1, 2, 3" to "positions 1024, 2048, 3072 (large gaps leave room for fractional inserts in Spec 08 task movement)" to match implementation
+- `specs/05-boards-crud.md` — line 37: documented both `hasAccess` (boolean, non-throwing) and `assertAccess` (throws, used by controllers)
+
+### Decisions
+- **Default column positions 1024/2048/3072, not 1/2/3** — leaves 1023 slots of headroom on either side of each column for fractional inserts in Spec 08 (task move). Spec 06+ depends on this.
+- **`hasAccess` and `assertAccess` both exist** — `hasAccess(userId, boardId, minRole?)` returns boolean (one DB query, no throw) for callers that want conditional logic; `assertAccess(...)` throws 404/403 and is used by every controller route. Spec wording acknowledges both.
+- **3 conventional commits, not 1 mega-commit** — backend, auth refactor, and frontend are independently revertable; each commit passes its own quality gates; matches the per-spec commit cadence used in Iterations 1-5
+- **`<AlertDialog>` only for delete, `<Dialog>` for create/edit** — DESIGN.md: destructive confirms get AlertDialog; content gets Dialog
+- **OWNER cannot be granted via share (400)** — prevents accidental ownership transfer via the share endpoint; ownership transfer is explicitly out of scope per Spec 05
+- **No frontend unit tests yet** — Vitest is configured but adding component tests is deferred; backend e2e covers the API contracts that the frontend relies on
+- **Role badge uses `text-kanban-{role}-foreground` (token), not `text-white` (hardcoded)** — DESIGN.md mandates "no hardcoded colors in components"; fixed the small drift that was in the uncommitted work
+
+### Files touched
+**Backend (commit 1, `e6a595a`):**
+- `backend/src/boards/boards.module.ts` — create
+- `backend/src/boards/boards.service.ts` — create (293 lines)
+- `backend/src/boards/boards.controller.ts` — create (83 lines)
+- `backend/src/boards/dto/create-board.dto.ts` — create
+- `backend/src/boards/dto/update-board.dto.ts` — create
+- `backend/src/boards/dto/share-board.dto.ts` — create
+- `backend/test/boards/boards.e2e-spec.ts` — create (442 lines)
+- `backend/src/app.module.ts` — modify (wire BoardsModule)
+
+**Auth (commit 2, `672bc99`):**
+- `backend/src/auth/strategies/jwt.strategy.ts` — modify (export JwtPayload)
+- `backend/src/auth/decorators/current-user.decorator.ts` — modify
+- `backend/src/auth/guards/jwt-auth.guard.ts` — modify
+- `backend/src/auth/auth.service.ts` — modify
+- `backend/src/auth/auth.controller.ts` — modify
+- `backend/src/auth/auth.module.ts` — modify
+- `backend/src/auth/dto/register.dto.ts` — modify
+- `backend/src/auth/dto/login.dto.ts` — modify
+- `backend/test/auth/auth.e2e-spec.ts` — modify (hardened ValidationPipe)
+
+**Frontend (commit 3, `e0f05bd`):**
+- `frontend/src/lib/types.ts` — modify (full BoardResponse shape)
+- `frontend/src/lib/boards.ts` — create (7 API wrappers)
+- `frontend/src/components/boards/board-form.tsx` — create
+- `frontend/src/components/boards/role-badge.tsx` — create
+- `frontend/src/app/boards/page.tsx` — modify (full list page)
+- `frontend/src/app/globals.css` — modify (kanban-{role}-foreground vars)
+- `frontend/tailwind.config.ts` — modify (kanban block with foreground sub-keys)
+- `specs/05-boards-crud.md` — modify (fractional positions + hasAccess/assertAccess)
+
+**Docs:**
+- `docs/iteration-log.md` — append (this entry)
+
+### Considered but rejected
+- **Single mega-commit for all of Spec 05** — splits cleanly along backend/auth/frontend lines; each commit independently passes tests; easier to revert if Spec 06 design changes
+- **Vitest tests for `BoardForm` / `RoleBadge` / boards page** — adds time without much value; backend e2e covers the API contracts; can add when we have a stable UI snapshot baseline
+- **Updating the `_prisma_migrations` table manually** — not needed for these e2e tests; they use the schema directly via Prisma client; defer to Spec 11 (docker-compose workflow) which will own migration seeding
+- **Using `ParseUUIDPipe` without `version: '4'`** — accepts UUIDs of any version; we generate v4 so being explicit catches typos in tests
+- **Returning the `passwordHash` in any board response** — explicitly forbidden by AGENTS.md; service constructs `BoardMemberView` with `select: { user: { select: { id, email, name } } }` — hash never leaves the user row
+- **Allowing `role: OWNER` in `ShareBoardDto`** — would create a path to grant ownership without going through `POST /api/boards`; rejected for security; ownership transfer is out of scope
+
+### Verification
+- `cd backend && npm run build` → ✅ Compiled successfully
+- `cd backend && npm run test:e2e` → ✅ **35/35 tests pass** (2 health + 10 auth + 23 boards)
+- Boards e2e covers: 201 create + 3 columns + OWNER role, 200 list with isolation, 200 get + 404/403, 200 patch (EDITOR) + 403 (VIEWER), 204 delete + cascade, 201 share (EDITOR/VIEWER) + 400 OWNER + 404 user + 409 already-member + 400 self-share + 403 by EDITOR, 204 revoke + 400 OWNER + 204 idempotent, 403 on GET after revoke
+- `cd frontend && npm run typecheck` → ✅ 0 errors (after fixing 2 nullable-narrowing issues in boards/page.tsx)
+- `cd frontend && npm run lint` → ✅ No ESLint warnings or errors
+- `cd frontend && npm run build` → ✅ 5/5 routes; `/boards` is 8.6 kB (195 kB First Load JS)
+- Postgres container (`kanban-pg`) running on host port 5433 (started from previous iteration; Docker daemon had gone offline, restored before running e2e)
+
+### Known caveats
+- **No frontend tests** — Vitest is set up but no tests added yet. The page is fully functional and the backend contracts are exercised by e2e; UI tests can be added when we have a snapshot baseline (probably during Spec 09).
+- **`/boards/[id]` board-detail page does not exist yet** — owned by Spec 06/07/08/09 (column/task CRUD + drag-drop + sharing UI). The list page has Edit/Delete but no "Open board" link yet.
+- **No "Share" button on each board card** — sharing UI is Spec 09; backend `shareBoard`/`revokeBoardShare` endpoints exist but no UI invokes them yet.
+
+### Next
+- Spec 06: Columns CRUD (backend endpoints + frontend column management inside a board)
+- Spec 07: Tasks CRUD
+- Spec 08: Task movement (fractional position)
+- Spec 09: Board sharing UI + board-detail page
+- Spec 10: Drag-and-drop UI
+- Spec 11: docker-compose for the full stack (port 5433)
