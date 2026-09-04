@@ -531,3 +531,73 @@ Entries are appended by the agent after every non-trivial iteration (see `/AGENT
 - Spec 09: Board sharing UI + board-detail page
 - Spec 10: Drag-and-drop UI
 - Spec 11: docker-compose for the full stack (port 5433)
+
+---
+
+## [2026-09-04 11:15] — Iteration 7: Spec 06 — Columns CRUD (backend only)
+
+**Spec:** `specs/06-columns-crud.md`
+**Phase:** Day 2 / Columns
+
+### What was built
+- `backend/src/columns/columns.module.ts` — minimal NestJS module; imports `BoardsModule` so it can inject `BoardsService` for auth checks; exports `ColumnsService` for future Spec 07 (Tasks)
+- `backend/src/columns/columns.service.ts` (~205 lines) — 4 public methods (`create`, `update`, `remove`, `reorder`); private `defaultInclude()` (tasks ordered by position) and `toColumnResponse()` to map Prisma → response DTO; `TaskView` and `ColumnResponse` interfaces matching the spec's mandated shape
+- `backend/src/columns/columns.controller.ts` — class-level `@UseGuards(JwtAuthGuard)`; 4 routes: `@Post()` 201, `@Patch(':id')` 200, `@Delete(':id')` 204, `@Put('reorder')` 200; `ParseUUIDPipe({version:'4'})` on `:id`
+- DTOs:
+  - `create-column.dto.ts` — `boardId` (UUID v4), `title` (1-100 chars), optional `position` (Float ≥ 0)
+  - `update-column.dto.ts` — optional `title` and `position`; both with the same validation as create
+  - `reorder-columns.dto.ts` — `boardId` (UUID v4), `columnIds` (non-empty array of UUID v4)
+- `backend/test/columns/columns.e2e-spec.ts` (~450 lines, 25 test cases) — covers all 16 acceptance criteria plus 5 error cases (404 unknown UUID, 400 missing fields, 403 viewer, 403 stranger, 400 last-column deletion)
+- Wired `ColumnsModule` into `app.module.ts`
+
+### Decisions
+- **Module imports `BoardsModule`** — needs `BoardsService.assertAccess` for auth. Avoids duplicating the authorization logic and keeps `BoardsService` as the single source of truth for board membership
+- **`@Put('reorder')` declared on a clean `/columns` controller** — no `:id` PUT route exists, so route ordering doesn't matter today, but the convention puts literal-path routes before parameterized ones to prevent shadowing
+- **Auto-position = `max(existing) + 1024`** — leaves 1023 slots of headroom on each side for fractional inserts (Spec 08 task movement uses this same convention for tasks)
+- **Reorder positions = `1024 * (i + 1)`** — fresh, evenly-spaced positions; same headroom reasoning as auto-position
+- **Validation order in `reorder`:** duplicates first (cheap), then per-ID "exists on this board" (404), then total count check (400 partial) — gives clean error semantics: duplicates and "wrong board"/"unknown" can never be confused with "partial reorder"
+- **Refuses to delete the last column** — UI guardrail; without this a user could break their own board. `BadRequestException('Cannot delete the last remaining column...')` with a clear message
+- **`@Put('reorder')` uses `@Body()` only** — `boardId` lives in the DTO, not the URL. Could've been `/api/boards/:id/columns/reorder` but Spec 06 explicitly says `PUT /api/columns/reorder`
+- **DTO's `IsNumber({ maxDecimalPlaces: 6 })`** — prevents callers from sending absurdly-precise floats (e.g. `1024.00000000001`) that would clutter the DB and break ordering invariants. Six decimals is more than enough headroom for ~50 fractional inserts between any two positions
+- **Cascade verified by direct Prisma write** — Spec 07 (Tasks CRUD) doesn't exist yet, so the "delete cascades to tasks" test seeds a task via `prisma.task.create({...})` rather than through an HTTP endpoint. Will become a real e2e call once Spec 07 lands
+- **No frontend work** — Spec 06 is backend-only by design. Board-detail page that visually renders columns is owned by Specs 09/10
+
+### Files touched
+- `backend/src/columns/columns.module.ts` — create
+- `backend/src/columns/columns.service.ts` — create
+- `backend/src/columns/columns.controller.ts` — create
+- `backend/src/columns/dto/create-column.dto.ts` — create
+- `backend/src/columns/dto/update-column.dto.ts` — create
+- `backend/src/columns/dto/reorder-columns.dto.ts` — create
+- `backend/test/columns/columns.e2e-spec.ts` — create
+- `backend/src/app.module.ts` — modify (wire ColumnsModule)
+
+### Considered but rejected
+- **Adding `GET /api/columns/:id` and `GET /api/columns?boardId=...`** — Spec 06 doesn't list them; columns are read through `GET /api/boards/:id` only. Adding them would be scope creep and create two ways to read the same data
+- **Using UUID v7** — `ParseUUIDPipe({version:'4'})` is already the project standard (from Spec 02); v7 wasn't requested and would diverge from boards
+- **`PATCH /api/columns/reorder`** — `PUT` is the right verb for full-state replacement (the entire column ordering is replaced atomically). `PATCH` would imply partial update semantics
+- **Atomic `prisma.column.deleteMany` for cascade** — Prisma's `onDelete: Cascade` handles it for free at the DB level; no need to do it manually
+- **`Atomics class` for position step** — overengineered for a single constant
+- **Adding `path` to the ValidationPipe error message** — NestJS already formats the response with `{ statusCode, message, error }` per the global HttpExceptionFilter
+- **Allowing PATCH to change `boardId`** — moving a column to a different board is a destructive operation (would require re-attaching tasks). Spec 06 explicitly limits PATCH to title/position. If we need move-to-board later, add a dedicated `POST /api/columns/:id/move` endpoint
+- **Using `Int` autoincrement position** — would require renumbering on every move, defeating the fractional-positioning design from Spec 01/08
+
+### Verification
+- `cd backend && npm run build` → ✅ Compiled successfully
+- `cd backend && npm run lint` → ✅ 0 errors (after removing unused `viewersBoard` fixture; linter auto-fixed import formatting)
+- `cd backend && npm run test:e2e` → ✅ **60/60 tests pass** (2 health + 10 auth + 23 boards + 25 columns)
+- Columns e2e covers:
+  - `POST /api/columns`: 201 auto-position (max+1024), 201 explicit position, 403 viewer, 403 stranger, 400 missing title, 400 empty title, 400 invalid UUID for boardId
+  - `PATCH /api/columns/:id`: 200 title update, 200 position update, 403 viewer, 403 stranger, 404 unknown UUID, 400 empty title
+  - `DELETE /api/columns/:id`: 204 with cascade (verified via `prisma.task.findUnique` → null), 400 last column, 403 viewer, 403 stranger, 404 unknown UUID
+  - `PUT /api/columns/reorder`: 200 reversed + persisted + GET verifies new order, 403 viewer, 400 missing boardId, 400 empty columnIds, 404 columnId from different board, 404 unknown columnId, 400 partial reorder (count mismatch)
+
+### Known caveats
+- **No frontend yet** — board-detail page that uses these endpoints doesn't exist. Owned by Specs 09/10
+- **Position step `1024` is fixed** — fine for ~50 fractional inserts between columns; if a user reorders many times between the same pair, eventually positions become tiny floats. Spec 08 will need a "rebalance positions" routine if this becomes an issue (rare in practice — manual reordering caps at the number of columns, typically <10)
+- **Reorder is full-state replacement** — partial reorders are rejected (400). If UX needs "move one column to the front", the frontend can fetch the current column list, mutate locally, and PUT the full new array back
+
+### Next
+- Spec 07: Tasks CRUD (create/update/delete, with `assigneeId` validation against board membership)
+- Spec 08: Task movement (fractional position between any two siblings)
+- Spec 09: Board sharing UI + board-detail page (where columns + tasks will render visually)
