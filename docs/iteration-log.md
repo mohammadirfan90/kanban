@@ -687,3 +687,89 @@ Entries are appended by the agent after every non-trivial iteration (see `/AGENT
 - Spec 08: Task movement (fractional position between any two siblings, with cross-column moves supported)
 - Spec 09: Board sharing UI + board-detail page (where columns + tasks will render visually)
 - Spec 10: Drag-and-drop UI (the headline UX feature)
+
+---
+
+## [2026-09-04 22:45] — Iteration 7: Spec 08 — Task movement backend
+
+**Phase:** Backend (Days 1-2)
+
+### Context
+
+Spec 08 owns `PATCH /api/tasks/:id/move` — the endpoint that powers drag-and-drop on the frontend (Spec 10). This is the **core ordering-correctness deliverable** from the assessment brief: "ordering remains stable, accurate, and conflict-free." The whole feature hinges on the **fractional-indexing algorithm**: when inserting between two tasks with positions `prev` and `next`, new position = `(prev + next) / 2`. This avoids renumbering siblings on every move. The algorithm only breaks down after ~50 sequential moves into the same gap (positions become too tiny for `Float64` precision); when that happens we **rebalance** — renumber every task in the target column to evenly spaced integers starting at 1.
+
+Backend-only by spec scope. Drag-drop UI is Spec 10.
+
+### What was built
+
+**1 endpoint + 1 algorithm + 1 helper algorithm + 20 e2e tests**
+
+- `PATCH /api/tasks/:id/move` — moves a task within or across columns on the same board. Body: `{ targetColumnId: UUID, newIndex: integer >= 0 }`. Requires EDITOR+ on the source task's board.
+- `TasksService.move(userId, taskId, dto)` — orchestrates the 5-step algorithm:
+  1. Resolve source task's boardId (via `resolveBoardIdForTask` helper from Spec 07) + assert EDITOR.
+  2. Verify target column exists AND belongs to the same board (404 otherwise — security: cross-board moves are out of scope and would require re-checking the assignee against a different member list).
+  3. Load target column's tasks, excluding the source if same-column.
+  4. Compute new position (midpoint of neighbors, first/2, or last+1; 1 for empty column).
+  5. If computed position is within `REBALANCE_THRESHOLD = 1e-10` of any existing task, renumber everything and place the moved task. Otherwise just persist.
+- `TasksService.computeNewPosition` — pure function, returns the would-be position.
+- `TasksService.needsRebalance` — predicate, true when precision is exhausted.
+- `TasksService.rebalanceAndPlace` — transactional renumber to integers 1, 2, 3, … with the moved task inserted at `newIndex`.
+- `MoveTaskDto` — `@IsUUID('4')` on `targetColumnId`, `@IsInt() @Min(0)` on `newIndex`.
+- `@Patch(':id/move')` route on `TasksController` (placed AFTER `@Patch(':id')` is fine because NestJS resolves exact paths first; route ordering is conventional not required).
+- `move.e2e-spec.ts` — 20 e2e test cases (within-column, cross-column, rebalance, authorization, not-found, validation, concurrency smoke).
+
+### Decisions
+
+- **Target column must belong to the same board as source task** — implicit constraint from the spec. Moving across boards would require re-checking assignee validity against a different member list, isn't in the spec, and is a security smell. 404 if `targetColumn.boardId !== sourceBoardId`.
+- **Empty target column → position = 1** — per spec algorithm. Note that the default columns created at board setup use positions 1024/2048/3072 (Spec 05 decision for column headroom). After the first move into an empty column, Spec 08's algorithm takes over regardless of how the existing tasks were created — `newIndex=0` uses `first.position/2`, mid-insert averages neighbors. The existing `TASK_POSITION_STEP = 1` from Spec 07 (used by `POST /api/tasks`) is irrelevant to the move endpoint.
+- **Precision threshold `1e-10`** — per spec. Matches `Float64` machine epsilon for numbers in `[0, 10^6]`. Sufficient for any realistic drag-drop session (~50 sequential moves into the same gap before rebalance triggers).
+- **Rebalance strategy: renumber to integers starting at 1 with step 1** — per spec. The renumber runs in a single `prisma.$transaction` so it's atomic. The moved task's final update is also part of the same logical "move" operation but is a separate `task.update` (not inside the transaction since the `position` field of the moved task already exists in `ordered` and gets renumbered in the transaction).
+- **Same-column and cross-column moves are handled uniformly** — the algorithm loads target tasks, excludes the source by id, computes position, updates. The source column's remaining tasks are NOT renumbered (gaps are fine, per spec — verified by an explicit "siblings unchanged" test).
+- **Reuses `resolveBoardIdForTask` and `defaultInclude`/`toTaskResponse` from Spec 07** — zero new helpers beyond the 3 algorithm-specific ones (`computeNewPosition`, `needsRebalance`, `rebalanceAndPlace`).
+- **No frontend changes** — Spec 08 is backend-only per its scope; drag-drop UI is Spec 10.
+
+### Files touched
+
+**Backend (commit `25465c3`):**
+- `backend/src/tasks/dto/move-task.dto.ts` — create
+- `backend/src/tasks/tasks.service.ts` — modify (add `move` + 3 helpers + `REBALANCE_THRESHOLD` constant)
+- `backend/src/tasks/tasks.controller.ts` — modify (add `@Patch(':id/move')`)
+- `backend/test/tasks/move.e2e-spec.ts` — create (~410 lines, 20 tests)
+
+**Docs:**
+- `docs/iteration-log.md` — append (this entry)
+
+### Considered but rejected
+
+- **UUID-based optimistic locking (e.g., `If-Match` headers)** — out of scope; v1 is single-DB-write-per-move with last-write-wins semantics. Spec doesn't mention versioning.
+- **Moving across boards in one operation** — would require re-checking the assignee against the target board's member list, which is a different auth model. Out of scope; 404 surfaces cleanly if someone tries.
+- **Batch moves (`PATCH /api/tasks/move-batch`)** — out of scope. Spec defines single-task move only.
+- **Reusing the existing query for the source task** — initially looked promising (one fewer DB call), but the source task is a separate concern from the target column's tasks. Kept them separate for clarity.
+- **Renumbering the source column on cross-column moves** — spec says gaps are fine. Verified with the "siblings unchanged" test.
+- **Computing position via JS BigInt** — `Float64` is plenty for 50+ sequential mid-inserts before precision exhausts; spec is explicit that we rebalance to integers at that point. BigInt would mean a schema change to `BigInt` position which would break the rest of the code (currently uses `Float`).
+
+### Verification
+
+- `cd backend && npm run build` → ✅ Compiled successfully (`tsc --noEmit` exits 0)
+- `cd backend && npm run lint` → ✅ 0 errors (linter auto-fixed formatting)
+- `cd backend && npm run test:e2e` → ✅ **108/108 tests pass** (88 from before + **20 new move tests**)
+- `move.e2e-spec.ts` covers:
+  - **Within-column moves (4)**: move to start (position 0.5), end (position 4), middle (position 2.25), siblings unchanged after a normal move
+  - **Cross-column moves (3)**: into empty column → position 1, back into populated column → append position 2, between two siblings → midpoint 1.5
+  - **Rebalance (1)**: seed tasks at `1.0` and `1.0 + 1e-11` (gap smaller than Float64 epsilon), move a third task into the gap → triggers rebalance → all 3 tasks renumbered to 1, 2, 3 with the moved task at newIndex=1 → position 2
+  - **Response shape (1)**: returns `{ id, columnId, position, title, ... }` reflecting the move
+  - **Authorization (3)**: VIEWER → 403, stranger → 403, EDITOR on the board can move someone else's task → 200
+  - **Not found (3)**: unknown task id → 404, unknown target column → 404, target column on a different board → 404
+  - **Validation (4)**: negative newIndex → 400, non-integer newIndex → 400, non-UUID targetColumnId → 400, non-UUID task id → 400
+  - **Concurrency smoke (1)**: two sequential moves at the same target index → both 200, no 500
+
+### Known caveats
+
+- **Last-write-wins on concurrent moves** — no optimistic locking. Two users moving different tasks into the same slot simultaneously will both succeed; the second write wins on position. For a v1 kanban this is acceptable; could add `If-Match` later if multi-user conflicts become a real problem.
+- **Rebalance writes N+1 updates in a single transaction** — for columns with hundreds of tasks, this could be a slow transaction. Realistic boards will have far fewer tasks per column; spec doesn't ask for batching.
+- **Cross-board move returns 404, not 403** — could be argued either way. 404 was chosen because from the source task's perspective, the target column literally does not exist on its board.
+
+### Next
+
+- Spec 09: Board sharing UI + board-detail page (where columns + tasks will render visually for the first time)
+- Spec 10: Drag-and-drop UI (the headline UX feature — now has a battle-tested backend to talk to)
