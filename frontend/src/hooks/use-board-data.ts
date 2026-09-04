@@ -62,7 +62,7 @@ export interface UseBoardDataResult {
  * Last-write-wins: when the API returns a different ordering than the
  * optimistic one (e.g., rebalance fired on the server), we trust the API.
  */
-export function useBoardData(id: string, viewerRole: 'OWNER' | 'EDITOR' | 'VIEWER' | null): UseBoardDataResult {
+export function useBoardData(id: string): UseBoardDataResult {
   const [board, setBoard] = useState<Board | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<BoardLoadError | null>(null);
@@ -70,7 +70,10 @@ export function useBoardData(id: string, viewerRole: 'OWNER' | 'EDITOR' | 'VIEWE
   const boardRef = useRef<Board | null>(null);
   boardRef.current = board;
 
-  const canEdit = viewerRole === 'OWNER' || viewerRole === 'EDITOR';
+  // Role comes from the loaded board itself — no separate prop needed.
+  // canEdit is computed live from board.role; while the board is loading we
+  // default to false (no UI affordances).
+  const canEdit = board != null && (board.role === 'OWNER' || board.role === 'EDITOR');
 
   const fetchBoard = useCallback(async () => {
     setLoading(true);
@@ -176,6 +179,7 @@ export function useBoardData(id: string, viewerRole: 'OWNER' | 'EDITOR' | 'VIEWE
                     ...c.tasks,
                     {
                       id: created.id,
+                      columnId: created.columnId,
                       title: created.title,
                       description: created.description,
                       position: created.position,

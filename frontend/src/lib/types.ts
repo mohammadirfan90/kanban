@@ -16,6 +16,8 @@ export interface BoardTask {
   title: string;
   description: string | null;
   position: number;
+  /** The column this task currently lives in. Mirrors the backend response. */
+  columnId: string;
   /** Nested assignee object (id/name/email only); null when unassigned. */
   assignee: { id: string; name: string; email: string } | null;
   createdAt: string;

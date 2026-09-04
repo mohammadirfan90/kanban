@@ -28,6 +28,7 @@ export interface ColumnResponse {
   updatedAt: string;
   tasks: Array<{
     id: string;
+    columnId: string;
     title: string;
     description: string | null;
     position: number;
