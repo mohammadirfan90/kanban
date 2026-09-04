@@ -15,6 +15,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { MoveTaskDto } from './dto/move-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TasksService, type TaskResponse } from './tasks.service';
 
@@ -44,6 +45,15 @@ export class TasksController {
     @Body() dto: UpdateTaskDto,
   ): Promise<TaskResponse> {
     return this.tasks.update(user.sub, id, dto);
+  }
+
+  @Patch(':id/move')
+  move(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: MoveTaskDto,
+  ): Promise<TaskResponse> {
+    return this.tasks.move(user.sub, id, dto);
   }
 
   @Delete(':id')

@@ -3,6 +3,7 @@ import type { Task } from '@prisma/client';
 import { BoardsService } from '../boards/boards.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto } from './dto/create-task.dto';
+import { MoveTaskDto } from './dto/move-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
 export interface TaskResponse {
@@ -18,6 +19,14 @@ export interface TaskResponse {
 
 /** Default position step when appending a new task to the end of a column. */
 const TASK_POSITION_STEP = 1;
+
+/**
+ * Precision threshold for the fractional-indexing rebalance trigger.
+ * If a computed position is closer than this to an existing task, we
+ * renumber the target column instead of storing a value that Float64
+ * can no longer distinguish.
+ */
+const REBALANCE_THRESHOLD = 1e-10;
 
 @Injectable()
 export class TasksService {
@@ -190,5 +199,128 @@ export class TasksService {
 
     await this.prisma.task.delete({ where: { id: taskId } });
     this.logger.log(`Task ${taskId} deleted by ${userId}`);
+  }
+
+  /**
+   * Move a task within or across columns using fractional indexing.
+   * Caller must have EDITOR+ on the source task's board.
+   *
+   * Algorithm:
+   *   1. Load the source task + assert EDITOR on its parent board.
+   *   2. Verify the target column exists AND belongs to the same board.
+   *      (Cross-board moves are out of scope and would require re-checking
+   *       the assignee against a different member list — security smell.)
+   *   3. Load the target column's tasks (excluding the source if same-column).
+   *   4. Compute the new position as a midpoint of the gap at `newIndex`,
+   *      or 1 for an empty column.
+   *   5. If the computed position is closer than `REBALANCE_THRESHOLD` to any
+   *      existing task, renumber every task in the target column to evenly
+   *      spaced integers (1, 2, 3, ...) and place the moved task at
+   *      `newIndex` in the new ordering. Otherwise just persist the new
+   *      position.
+   */
+  async move(userId: string, taskId: string, dto: MoveTaskDto): Promise<TaskResponse> {
+    // 1. Load + authorize.
+    const sourceBoardId = await this.resolveBoardIdForTask(taskId);
+    await this.boards.assertAccess(userId, sourceBoardId, 'EDITOR');
+
+    // 2. Target column must exist AND be on the same board.
+    const targetColumn = await this.prisma.column.findUnique({
+      where: { id: dto.targetColumnId },
+      select: { id: true, boardId: true },
+    });
+    if (!targetColumn || targetColumn.boardId !== sourceBoardId) {
+      throw new NotFoundException('Target column not found on this board');
+    }
+
+    // 3. Load target column's tasks, excluding the source if same-column.
+    const allTargetTasks = await this.prisma.task.findMany({
+      where: { columnId: dto.targetColumnId },
+      orderBy: { position: 'asc' },
+      select: { id: true, position: true },
+    });
+    const targetTasks = allTargetTasks.filter((t) => t.id !== taskId);
+
+    // 4. Compute the would-be position.
+    const newPosition = this.computeNewPosition(targetTasks, dto.newIndex);
+
+    // 5. Rebalance if precision exhausted.
+    if (this.needsRebalance(targetTasks, newPosition)) {
+      const placed = await this.rebalanceAndPlace(targetTasks, taskId, dto.newIndex);
+      const updated = await this.prisma.task.update({
+        where: { id: taskId },
+        data: {
+          columnId: dto.targetColumnId,
+          position: placed.movedTaskPosition,
+        },
+        include: this.defaultInclude(),
+      });
+      this.logger.log(
+        `Task ${taskId} moved to column ${dto.targetColumnId} (rebalance, position ${placed.movedTaskPosition}) by ${userId}`,
+      );
+      return this.toTaskResponse(updated);
+    }
+
+    const updated = await this.prisma.task.update({
+      where: { id: taskId },
+      data: { columnId: dto.targetColumnId, position: newPosition },
+      include: this.defaultInclude(),
+    });
+    this.logger.log(
+      `Task ${taskId} moved to column ${dto.targetColumnId} position ${newPosition} by ${userId}`,
+    );
+    return this.toTaskResponse(updated);
+  }
+
+  /**
+   * Compute the new fractional position based on existing target tasks and
+   * the 0-based `newIndex` AFTER the move.
+   *   - empty column → 1
+   *   - newIndex = 0 → first.position / 2 (insert above the head)
+   *   - newIndex >= length → last.position + 1 (append)
+   *   - otherwise → midpoint of neighbors at newIndex-1 and newIndex
+   */
+  private computeNewPosition(
+    targetTasks: Array<{ id: string; position: number }>,
+    newIndex: number,
+  ): number {
+    if (targetTasks.length === 0) return 1;
+    if (newIndex === 0) return targetTasks[0].position / 2;
+    if (newIndex >= targetTasks.length) {
+      return targetTasks[targetTasks.length - 1].position + 1;
+    }
+    const prev = targetTasks[newIndex - 1];
+    const next = targetTasks[newIndex];
+    return (prev.position + next.position) / 2;
+  }
+
+  /** True when the computed position is dangerously close to an existing task. */
+  private needsRebalance(targetTasks: Array<{ position: number }>, newPosition: number): boolean {
+    return targetTasks.some((t) => Math.abs(t.position - newPosition) < REBALANCE_THRESHOLD);
+  }
+
+  /**
+   * Renumber every task in the target column to evenly spaced integers
+   * (1, 2, 3, ...) and place the moved task at `newIndex` in the new ordering.
+   * Wraps the renumber in a single transaction for atomicity.
+   */
+  private async rebalanceAndPlace(
+    targetTasksExclMoved: Array<{ id: string; position: number }>,
+    movedTaskId: string,
+    newIndex: number,
+  ): Promise<{ movedTaskPosition: number }> {
+    const ordered: string[] = targetTasksExclMoved.map((t) => t.id);
+    const insertAt = Math.min(newIndex, ordered.length);
+    ordered.splice(insertAt, 0, movedTaskId);
+
+    const updates = ordered.map((id, i) =>
+      this.prisma.task.update({
+        where: { id },
+        data: { position: i + 1 },
+      }),
+    );
+    await this.prisma.$transaction(updates);
+
+    return { movedTaskPosition: insertAt + 1 };
   }
 }
