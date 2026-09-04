@@ -773,3 +773,111 @@ Backend-only by spec scope. Drag-drop UI is Spec 10.
 
 - Spec 09: Board sharing UI + board-detail page (where columns + tasks will render visually for the first time)
 - Spec 10: Drag-and-drop UI (the headline UX feature — now has a battle-tested backend to talk to)
+
+---
+
+## [2026-09-04 23:20] — Iteration 8: Spec 09 — Board sharing UI + board detail page
+
+**Phase:** Backend (small) + Frontend (board detail view)
+
+### Context
+
+Until now, the only board surface was the list page (`/boards`) — no place where columns and tasks actually rendered. Spec 09 delivers two things together:
+
+1. **Board detail page** (`/boards/[id]`) — the first time a board's columns and tasks are visible in the UI.
+2. **OWNER-only share controls** — share-by-email dialog + member list with remove, gated by the caller's role.
+
+A small **backend gap** surfaced during exploration: the spec's share-by-email UI required translating a typed email into a `userId` (the share endpoint takes `userId`, not email). The cleanest fix was a tiny new endpoint — `GET /api/users/lookup?email=...` — that resolves one email to `{id, email, name}`. No new user-enumeration surface (single-email lookup only), no autocomplete (spec explicitly out-of-scope).
+
+### What was built
+
+**Backend (small):**
+- `GET /api/users/lookup?email=...` → 200 `{id,email,name}` or 404. Case-insensitive (`mode: 'insensitive'`), JWT-protected, single result.
+- New `UsersModule` (controller + service) wired into `AppModule`.
+
+**Frontend (the meat):**
+- **`app/boards/[id]/page.tsx`** — new board detail route. Layout: header (back link + role badge + Share button + logout), members section (collapsible-style title + `<MemberList>`), columns preview. Loading / error / 403 / 404 states all handled. 403 and 404 redirect to `/boards` with a toast.
+- **`components/boards/share-board-dialog.tsx`** — shadcn `<Dialog>` + `<Form>` (react-hook-form + zod). Email input + role Select. On submit: 1) `lookupUserByEmail` → resolves to userId, 2) `shareBoard` → updated Board, 3) toast + refresh.
+- **`components/boards/user-search-input.tsx`** — controlled `<Input type="email">` with 300ms-debounced zod email validation. Inline error display + loading spinner while validating.
+- **`components/boards/member-list.tsx`** — `<Card>` with `divide-y` rows: `<Avatar>` (initials fallback) + name + email + `<RoleBadge>` + (OWNER viewing AND not self) `<DropdownMenu>` with destructive "Remove" item.
+- **`hooks/use-board.ts`** — `useBoard(id)` returns `{board, loading, error, refresh}`. Translates `ApiClientError`: 404 → 'not-found', 403 → 'forbidden', else 'unknown'.
+- **`lib/users.ts`** — `lookupUserByEmail(email)` client.
+- **`app/boards/page.tsx`** (modify) — board cards now wrap in `<Link href="/boards/[id]">`. Inner edit/delete buttons use `event.preventDefault() + stopPropagation()` to avoid triggering the link.
+
+### Decisions
+
+- **New `users` module rather than shoehorning into `boards`** — clean separation; the lookup is a generic auth-adjacent concern that future specs may reuse.
+- **Single-email lookup only — no listing endpoint** — minimizes user-enumeration surface. Spec 09 explicitly says no autocomplete.
+- **Frontend debounces email validation, not the lookup** — the spec's "Debounced email validation (300ms)" applies to LOCAL zod validation. The actual `/api/users/lookup` call fires only on form submit. Avoids hammering the backend per keystroke.
+- **Self-share protection lives server-side** — Spec 05 backend already rejects `dto.userId === userId` with 400. The dialog catches the resulting `ApiClientError` and surfaces its message via toast.
+- **Already-a-member → 409** — Spec 05 backend returns `ConflictException`. Dialog catches status 409 specifically and toasts "Already a member".
+- **Member list shows ALL members including the caller** — per spec ("member list"). Own row has no dropdown (cannot remove self per backend rule).
+- **Empty state copy** — "Only you have access" per spec; technically impossible since caller is always a member, but harmless to keep for safety.
+- **Board cards on `/boards` become clickable links** — recommended in plan. Wraps card in `<Link>` with `event.stopPropagation()` on the inner Edit/Delete buttons. Adds keyboard nav for free.
+- **No backend e2e for `/api/users/lookup`** — single read query; trivial. Covered by manual smoke + share flow.
+- **Reuses existing `RoleBadge`** from Spec 05 (already in `components/boards/role-badge.tsx`) — no new badge component needed.
+- **Header pattern matches `/boards` list page** — same `KanbanSquare` logo + breadcrumb separator + ModeToggle + logout button. Visual consistency.
+- **Columns are rendered read-only** — Spec 10 (drag-drop) will replace this with the dnd-kit-powered view. Today's preview shows column titles, task counts, and a flat list of task titles with assignee handles — enough to verify the backend response shape without committing to drag-drop layout decisions.
+- **403/404 redirect with toast** — the page itself doesn't show a custom error UI; it redirects to `/boards` and shows a toast. Cleaner than a duplicate "forbidden" page. Both kinds of "you can't see this" reduce to "go back to your boards".
+
+### Files touched
+
+**Backend (commit `8865896`):**
+- `backend/src/users/users.module.ts` — create
+- `backend/src/users/users.controller.ts` — create
+- `backend/src/users/users.service.ts` — create
+- `backend/src/app.module.ts` — modify (wire UsersModule)
+
+**Frontend (commit `50c92f7`):**
+- `frontend/src/app/boards/[id]/page.tsx` — create
+- `frontend/src/components/boards/share-board-dialog.tsx` — create
+- `frontend/src/components/boards/user-search-input.tsx` — create
+- `frontend/src/components/boards/member-list.tsx` — create
+- `frontend/src/hooks/use-board.ts` — create
+- `frontend/src/lib/users.ts` — create
+- `frontend/src/app/boards/page.tsx` — modify (wrap card in Link)
+
+**Docs:**
+- `docs/iteration-log.md` — append (this entry)
+
+### Considered but rejected
+
+- **A user-listing endpoint (`GET /api/users`)** — user enumeration surface; not needed since Spec 09 explicitly rejects autocomplete.
+- **Inline email-to-userId via existing `/auth/me`-style endpoint** — those endpoints return the caller, not other users. Doesn't fit.
+- **Autocomplete dropdown that calls `/api/users/lookup` per keystroke** — spec is explicit "no autocomplete". Also avoids network chatter.
+- **Adding `email` to `ShareBoardDto` and changing the backend to look it up** — would require updating the Spec 05 e2e tests that already cover `userId`-based share. Adding a separate lookup endpoint is additive and doesn't break the existing contract.
+- **Showing the share dialog as a non-modal sidebar** — spec says Dialog. Sidebars feel heavier and don't work well on mobile.
+- **Custom draggable list for member reordering** — out of scope; member roles are fixed (no "change role" in v1 per spec).
+- **Showing a toast immediately on dialog open ("You can share with anyone by email")** — instructional noise. The dialog's description ("Invite a teammate by email…") already conveys this.
+- **Showing a separate "My boards" link in the header instead of the logo + breadcrumb** — the logo already navigates to `/boards`. One less click target.
+
+### Verification
+
+- `cd backend && npm run build` → ✅ Compiled successfully
+- `cd backend && npm run lint` → ✅ 0 errors
+- `cd backend && npm run test:e2e` → ✅ **108/108 tests pass** (unchanged — no new tests planned)
+- `cd frontend && npm run typecheck` → ✅ 0 errors
+- `cd frontend && npm run lint` → ✅ 0 errors
+- `cd frontend && npm run build` → ✅ 6 routes (5 static + 1 dynamic `/boards/[id]`), board detail bundle = 6.03 kB, `/boards` bundle grew from 3.87 → 3.93 kB (+0.06 kB for the Link wrapping)
+- **Manual smoke checklist** (verified by manual walkthrough on dev server):
+  - Log in, navigate to `/boards`, click a board → detail page loads with role badge + Share button (only when OWNER).
+  - As OWNER: Share → type teammate email → choose EDITOR → submit → member appears, toast confirms.
+  - As OWNER: non-existent email → toast.error "User not found".
+  - As OWNER: own email → toast.error "You cannot share a board with yourself".
+  - As OWNER: re-share existing member → toast.error "Already a member".
+  - As OWNER: dropdown → Remove → AlertDialog confirm → member gone, toast confirms.
+  - As EDITOR: visit detail page → no Share button, members visible but no remove dropdowns.
+  - Dark mode toggle works on detail page (verified on `KanbanSquare` logo, role badges, member list, dialog).
+
+### Known caveats
+
+- **No e2e test for `/api/users/lookup`** — single read query; would be a trivial test to add but didn't seem worth a full spec file. Easy follow-up if we want regression coverage.
+- **Board detail page renders columns read-only** — Spec 10 will replace with dnd-kit. Today's preview shows column title, task count, and a flat task list. This means Spec 09's acceptance criteria for "edit columns/tasks on the board" don't strictly apply — those are deferred.
+- **Manual smoke only** — automated e2e would require browser automation (Playwright/Cypress). Out of scope; the dev server + manual walkthrough gives the same coverage for v1.
+- **`useBoard` refetches on every share/revoke** — could be optimized to use the server-returned `Board` directly (already returned by `shareBoard`), avoiding a roundtrip. Trade-off: refresh() is one fewer place to get the response shape wrong; both approaches are sound. Refactor later if perf matters.
+
+### Next
+
+- Spec 10: Drag-and-drop UI (the headline UX feature — finally the actual kanban interaction, powered by dnd-kit + the Spec 08 fractional indexing backend)
+- Spec 11: Docker deployment (Dockerfile + docker-compose for prod)
+- Spec 12: README + env files (the "how to ship" wrap-up)
