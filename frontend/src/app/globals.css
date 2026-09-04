@@ -39,6 +39,11 @@
     --kanban-owner: 239 84% 67%;        /* indigo */
     --kanban-editor: 160 84% 39%;       /* emerald */
     --kanban-viewer: 215 16% 47%;       /* slate */
+
+    /* Role badge foreground (per DESIGN.md — all white for AA contrast on saturated backgrounds) */
+    --kanban-owner-foreground: 0 0% 100%;
+    --kanban-editor-foreground: 0 0% 100%;
+    --kanban-viewer-foreground: 0 0% 100%;
   }
 
   /* Dark theme (per DESIGN.md) */

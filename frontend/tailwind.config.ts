@@ -52,9 +52,18 @@ const config: Config = {
         },
         // Domain-specific role colors (per DESIGN.md)
         kanban: {
-          owner: 'hsl(var(--kanban-owner))',
-          editor: 'hsl(var(--kanban-editor))',
-          viewer: 'hsl(var(--kanban-viewer))',
+          owner: {
+            DEFAULT: 'hsl(var(--kanban-owner))',
+            foreground: 'hsl(var(--kanban-owner-foreground))',
+          },
+          editor: {
+            DEFAULT: 'hsl(var(--kanban-editor))',
+            foreground: 'hsl(var(--kanban-editor-foreground))',
+          },
+          viewer: {
+            DEFAULT: 'hsl(var(--kanban-viewer))',
+            foreground: 'hsl(var(--kanban-viewer-foreground))',
+          },
         },
       },
       borderRadius: {

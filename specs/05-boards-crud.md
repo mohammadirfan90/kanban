@@ -11,7 +11,7 @@ Implement Board CRUD endpoints and the sharing mechanism that allows board owner
 ## Inputs
 - Auth module complete (JWT guard available)
 - Prisma schema includes Board, BoardMember, BoardRole enum
-- Each new board automatically creates default columns: "To Do", "In Progress", "Done" (position 1, 2, 3)
+- Each new board automatically creates default columns: "To Do", "In Progress", "Done" (positions 1024, 2048, 3072 — large gaps leave room for fractional inserts in Spec 08 task movement)
 
 ## Outputs
 
@@ -34,7 +34,7 @@ Implement Board CRUD endpoints and the sharing mechanism that allows board owner
   - `DELETE /api/boards/:id` — delete (OWNER only, cascades to columns/tasks)
   - `POST /api/boards/:id/share` — share with another user (OWNER only)
   - `DELETE /api/boards/:id/share/:userId` — revoke access (OWNER only)
-- **Authorization helper:** `boardsService.hasAccess(userId, boardId, minRole?)` — returns true if user is OWNER/MEMBER with sufficient role. Role hierarchy: OWNER > EDITOR > VIEWER.
+- **Authorization helpers:** `boardsService.hasAccess(userId, boardId, minRole?)` — returns true/false (boolean, single DB query, no throw); `assertAccess(userId, boardId, minRole?)` — throws 404/403, returns the caller's role (used internally by controllers). Role hierarchy: OWNER > EDITOR > VIEWER.
 - Creating a board: in a transaction, create Board + BoardMember(OWNER) + 3 default Columns
 - Sharing: validate that target user exists, validate that they are not already a member, validate that OWNER role cannot be granted (only via creation)
 - Update board: only `title` and `description`, partial updates allowed
