@@ -2,6 +2,18 @@
 
 A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on the backend and Next.js + shadcn/ui on the frontend.
 
+## Live demo
+
+| | |
+| --- | --- |
+| **App** | <https://kanban-pink-rho.vercel.app> |
+| **API** | <https://kanban-api-vc5x.onrender.com/api> |
+| **API health** | <https://kanban-api-vc5x.onrender.com/api/health> |
+
+Register a new account from the app to try it — sign-up is open, and a new account starts with an empty board list.
+
+> **First request may be slow.** The API is on Render's free tier, which suspends the instance after a period of inactivity. The first call can take up to a minute while it wakes up; everything is fast once it is warm. If the first sign-in seems to hang, wait a moment and retry.
+
 ![Kanban board](docs/screenshots/board.png)
 
 ## Features
@@ -14,7 +26,7 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 - **Auth** — JWT-based register/login with bcrypt-hashed passwords
 - **Dark mode** — every page, every component, with next-themes
 - **Optimistic mutations** — the UI updates in the same frame as the interaction, then reconciles against the server's canonical ordering key; failures roll back
-- **Accessibility** — keyboard-navigable drag-drop, focus rings, ARIA labels
+- **Accessibility** — full keyboard drag-and-drop (`Space` to lift, arrows to move within a column and across columns, `Space` to drop, `Escape` to cancel), with screen-reader announcements that name the task and its destination column rather than reading raw ids. Plus focus rings and ARIA labels throughout
 
 ## Tech Stack
 
