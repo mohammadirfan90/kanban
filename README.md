@@ -137,50 +137,60 @@ Both apps now run with hot-reload; the frontend proxies API calls to the backend
 
 ## Architecture
 
-### Schema (5 tables)
+### Schema (7 tables)
 
 | Table          | Purpose                                                  |
 | -------------- | -------------------------------------------------------- |
 | `users`        | Auth (email + bcrypt)                                    |
-| `boards`       | Owned by a user, has many columns                        |
+| `boards`       | Owned by a user; carries a derived `key` (`PR`) and an atomic `taskCounter` for task keys |
 | `board_members`| Many-to-many users ↔ boards with a `role` (OWNER/EDITOR/VIEWER) |
-| `columns`      | Belongs to a board, has a fractional `position`          |
-| `tasks`        | Belongs to a column, has a fractional `position`, optional assignee |
+| `columns`      | Belongs to a board, ordered by a fractional-index `position` (String) |
+| `tasks`        | Belongs to a column, ordered by a fractional-index `position` (String); carries `number` (→ display key `PR-14`), `priority`, `dueDate`, optional assignee |
+| `labels`       | Per-board, unique name per board, palette-token `color`  |
+| `task_labels`  | Many-to-many tasks ↔ labels                              |
 
 Full schema: [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma).
 
 ### API endpoints
 
 ```
-POST   /api/auth/register          # create account
-POST   /api/auth/login             # get JWT
+POST   /api/auth/register            # create account
+POST   /api/auth/login               # get JWT
+GET    /api/auth/me                  # current user from the JWT
 
-GET    /api/boards                 # list boards the caller is a member of
-POST   /api/boards                 # create board (caller becomes OWNER)
-GET    /api/boards/:id             # full board (columns + tasks + members)
-PATCH  /api/boards/:id             # rename / describe
-DELETE /api/boards/:id             # OWNER only
+GET    /api/boards                   # list boards the caller is a member of
+POST   /api/boards                   # create board (caller becomes OWNER)
+GET    /api/boards/:id               # full board (columns + tasks + members + labels)
+PATCH  /api/boards/:id               # rename / describe
+DELETE /api/boards/:id               # OWNER only
 
-POST   /api/boards/:id/share        # OWNER invites a user (by email)
-DELETE /api/boards/:id/share/:userId  # OWNER removes a member
+POST   /api/boards/:id/share          # OWNER invites a user (by email)
+DELETE /api/boards/:id/share/:userId    # OWNER removes a member
 
-POST   /api/columns                # create column
-PATCH  /api/columns/:id            # rename
-DELETE /api/columns/:id            # delete (last column → 400)
+GET    /api/boards/:boardId/labels   # list a board's labels
+POST   /api/boards/:boardId/labels   # create a label (EDITOR+)
+PATCH  /api/labels/:id               # rename / recolor (EDITOR+ on the owning board)
+DELETE /api/labels/:id               # delete (EDITOR+; detaches from tasks, doesn't delete them)
 
-POST   /api/tasks                  # create task
-PATCH  /api/tasks/:id              # edit title/description/assignee
-DELETE /api/tasks/:id              # delete task
-PATCH  /api/tasks/:id/move         # move across/within columns
+POST   /api/columns                  # create column (appends; position is server-assigned)
+PATCH  /api/columns/:id              # rename
+PUT    /api/columns/reorder          # reorder all of a board's columns by index
+DELETE /api/columns/:id              # delete (last column → 400)
 
-GET    /api/users/lookup?email=…   # resolve email to userId (for share)
+POST   /api/tasks                    # create task (title, description, assigneeId, priority, dueDate, labelIds)
+GET    /api/tasks/:id                # get one task
+PATCH  /api/tasks/:id                # edit any of the above; labelIds replaces the set wholesale
+DELETE /api/tasks/:id                # delete task
+PATCH  /api/tasks/:id/move           # move across/within columns, conflict-free under concurrency
 
-GET    /api/health                 # liveness probe (no auth)
+GET    /api/users/lookup?email=…     # resolve email to userId (for share)
+
+GET    /api/health                   # liveness probe (no auth)
 ```
 
-### Fractional indexing for task ordering
+### Conflict-free ordering (fractional indexing)
 
-Each task has a `Float position` column. To move a task between two siblings, the server computes `(prev.position + next.position) / 2` — no renumbering, no lock contention. If the gap shrinks below an epsilon, the entire column is renumbered (`rebalance`). This is what makes drag-and-drop conflict-free and allows multiple users to reorder simultaneously without lost writes.
+`position` on `columns` and `tasks` is a base62 string, ordered lexicographically — not a float. Moving a task computes a key strictly between its new neighbours (`generateKeyBetween`), so there's always a representable value between any two distinct keys and no epsilon-triggered renumbering pass, ever. A unique `(column, position)` index is the backstop for the one case the algorithm alone can't prevent: two concurrent movers reading the same neighbours and computing the same key. The loser's write fails on the constraint and retries with jittered backoff against the now-current order. Verified: 8 concurrent moves to the same slot leave 8 distinct positions and a strict total order — the original float implementation collapsed 7 of 8 onto a single value under the same test. See [`fractional-index.ts`](backend/src/common/ordering/fractional-index.ts) and [`ordering-retry.ts`](backend/src/common/ordering/ordering-retry.ts).
 
 ## Environment Variables
 
@@ -219,7 +229,7 @@ npm run build        # both
 npm run lint         # both
 npm run typecheck    # frontend only
 npm run test         # backend unit tests
-npm run test:e2e     # backend e2e tests (108 specs)
+npm run test:e2e     # backend e2e tests (132 specs across 7 suites)
 ```
 
 ### Backend (`backend/`)
