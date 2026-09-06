@@ -10,7 +10,9 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 | **API** | <https://kanban-api-vc5x.onrender.com/api> |
 | **API health** | <https://kanban-api-vc5x.onrender.com/api/health> |
 
-Register a new account from the app to try it — sign-up is open, and a new account starts with an empty board list.
+**Demo account** — sign in with `demo@kanban.app` / `DemoBoard123!` to land straight on the seeded **Platform Roadmap** board pictured below, with labels, priorities, due dates and an overdue card already in place. Registration is also open if you would rather start from an empty workspace.
+
+> The demo board is shared and editable by anyone who signs in with it, so it may drift from the screenshot.
 
 > **First request may be slow.** The API is on Render's free tier, which suspends the instance after a period of inactivity. The first call can take up to a minute while it wakes up; everything is fast once it is warm. If the first sign-in seems to hang, wait a moment and retry.
 
