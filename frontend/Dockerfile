@@ -23,6 +23,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Guarantee the directory exists so the runner's COPY cannot fail on a build
+# context that ships no public/ folder.
+RUN mkdir -p /app/public
+
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
@@ -46,9 +50,11 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 # Static assets live separately — Next.js serves them from .next/static.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Public assets (optional). Create the dir even if the build context has no
-# public/ folder, so the COPY below is a no-op rather than a build failure.
-RUN mkdir -p ./public
+# Public assets. `output: 'standalone'` does not bundle public/, so it has to be
+# copied explicitly — without this every /logo.png style request 404s in the
+# container while working fine in `next dev`. The builder guarantees the source
+# directory exists, so this cannot fail on a context without public/.
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 
