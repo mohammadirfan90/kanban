@@ -4,6 +4,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { ThemeProvider } from '@/components/theme-provider';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { DevOverlay } from '@/components/dev-overlay';
 import './globals.css';
 
 const inter = Inter({
@@ -26,6 +27,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             <TooltipProvider delayDuration={150}>
               {children}
               <Toaster position="top-right" richColors closeButton />
+              <DevOverlay />
             </TooltipProvider>
           </AuthProvider>
         </ThemeProvider>

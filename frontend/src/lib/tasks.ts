@@ -1,15 +1,24 @@
 // Tasks API client — typed wrappers around the /tasks endpoints.
 
 import { request } from './api';
+import type { OrderKey, TaskLabel, TaskPriority } from './types';
 
-export interface CreateTaskInput {
+export interface TaskDepthInput {
+  priority?: TaskPriority | null;
+  /** ISO-8601 string, or null to clear. */
+  dueDate?: string | null;
+  /** The desired final label set, not a delta. `[]` clears them. */
+  labelIds?: string[];
+}
+
+export interface CreateTaskInput extends TaskDepthInput {
   columnId: string;
   title: string;
   description?: string;
   assigneeId?: string;
 }
 
-export interface UpdateTaskInput {
+export interface UpdateTaskInput extends TaskDepthInput {
   title?: string;
   description?: string;
   /** Pass `null` to explicitly unassign; omit to leave unchanged. */
@@ -25,9 +34,16 @@ export interface MoveTaskInput {
 export interface TaskResponse {
   id: string;
   columnId: string;
+  boardId: string;
+  /** Human-readable identifier, e.g. `PR-14`. Server-derived. */
+  key: string;
+  number: number;
   title: string;
   description: string | null;
-  position: number;
+  position: OrderKey;
+  priority: TaskPriority | null;
+  dueDate: string | null;
+  labels: TaskLabel[];
   assignee: { id: string; name: string; email: string } | null;
   createdAt: string;
   updatedAt: string;

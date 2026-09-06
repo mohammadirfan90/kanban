@@ -49,7 +49,10 @@ If the agent reads only the spec and skips DESIGN.md or this file, the output wi
 ### Frontend
 - **Framework:** Next.js 14 (App Router)
 - **Language:** TypeScript with `strict: true`
-- **Styling:** Tailwind CSS only (no CSS modules, no styled-components)
+- **Styling:** Tailwind CSS **v4** only (no CSS modules, no styled-components).
+  There is no `tailwind.config.ts` — the theme lives in `frontend/src/app/globals.css`
+  (`@theme inline`). shadcn components must be v4-era; v3-era ones will silently lose
+  utilities. Animations come from `tw-animate-css`, imported at the top of `globals.css`.
 - **Components:** **shadcn/ui exclusively** (Radix + Tailwind). No Material/Chakra/MUI/Bootstrap.
 - **Icons:** Lucide React (no emoji as functional icons)
 - **Toasts:** Sonner
@@ -90,6 +93,27 @@ These are non-negotiable. If an agent violates them, the user will reject the wo
 - **No gradients** in production UI (except subtle dark-mode hero if needed).
 - **No hardcoded colors** in components — use Tailwind tokens / CSS variables only.
 - **No `bg-blue-500` or default Tailwind colors** — use the configured `primary` token.
+- **No unverified Tailwind classes.** Tailwind drops what it cannot parse without any
+  error. After adding or upgrading a shadcn component, confirm its utilities reached
+  `frontend/.next/static/css/*.css` before trusting the render.
+- **shadcn v4 primitives need `forwardRef` on React 18.** The `ui/` components target
+  React 19, where `ref` is a plain prop; on React 18 a function component silently
+  drops it. If you pass a `ref` to a `ui/` component, make sure that component wraps
+  `React.forwardRef` — otherwise the ref is null with no error. This is what made
+  drag-and-drop non-functional (dnd-kit never received the card's DOM node).
+- **A response type on the client is not proof the server sends the field.** The board
+  API omitted `columnId` on nested tasks while the frontend type declared it, so every
+  read was `undefined` and both sides type-checked. Assert response shapes in e2e.
+- **Every `ui/` component that a Radix `asChild` trigger wraps needs `forwardRef`.**
+  `PopoverTrigger`/`DropdownMenuTrigger`/`TooltipTrigger` render a `Slot` that passes a
+  ref to the child. Without forwarding, Floating UI never measures the anchor and the
+  popover mounts off-screen with `open === true` and no error.
+- **Do not mutate board state for within-column drag previews.** dnd-kit's sorting
+  strategy already opens the gap with transforms. Mutating state there loops —
+  move changes layout, layout changes the hover target, which moves it back — until
+  React aborts with error #185 and unmounts the board mid-drag.
+- **Nested task responses come from `common/task-view.ts`.** Boards, columns and tasks
+  share one include and one mapper; do not hand-roll a fourth.
 - **No shadow-heavy design** — borders + soft shadows only. `shadow-xl` only on drag preview and modals.
 - **No `outline-none` without replacement** — always `focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`.
 - **No mixing border-radius** — default to `rounded-lg` everywhere.

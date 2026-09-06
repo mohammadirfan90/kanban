@@ -4,7 +4,7 @@
 # See specs/11-docker.md for the design rationale.
 
 # ── Stage 1: deps ────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 
 RUN apk add --no-cache libc6-compat
@@ -17,7 +17,7 @@ RUN npm ci
 # Produces .next/standalone (with a server.js that has only the runtime
 # deps) and .next/static (the JS/CSS chunks). NEXT_PUBLIC_* vars are
 # inlined at build time — pass via --build-arg from compose.
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -31,7 +31,7 @@ RUN npm run build
 # ── Stage 3: runner ──────────────────────────────────────────────────
 # Slim runtime image: standalone bundle + static assets. Runs as a
 # non-root user (spec 11 acceptance criterion).
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 
 RUN apk add --no-cache libc6-compat

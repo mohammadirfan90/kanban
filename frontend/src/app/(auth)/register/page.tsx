@@ -9,7 +9,7 @@ export const metadata: Metadata = {
 
 export default function RegisterPage() {
   return (
-    <Card className="border bg-card shadow-sm">
+    <Card className="border bg-card shadow-xs">
       <CardHeader className="space-y-1">
         <CardTitle className="text-2xl">Create your account</CardTitle>
         <CardDescription>Start organizing your work in seconds.</CardDescription>

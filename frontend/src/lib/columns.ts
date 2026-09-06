@@ -1,16 +1,17 @@
 // Columns API client — typed wrappers around the /columns endpoints.
 
 import { request } from './api';
+import type { BoardTask, OrderKey } from './types';
 
 export interface CreateColumnInput {
   boardId: string;
   title: string;
-  position?: number;
+  // No `position`: ordering keys are opaque and server-generated. New columns
+  // append; reordering goes through `reorderColumns`.
 }
 
 export interface UpdateColumnInput {
   title?: string;
-  position?: number;
 }
 
 export interface ReorderColumnsInput {
@@ -23,19 +24,10 @@ export interface ColumnResponse {
   id: string;
   boardId: string;
   title: string;
-  position: number;
+  position: OrderKey;
   createdAt: string;
   updatedAt: string;
-  tasks: Array<{
-    id: string;
-    columnId: string;
-    title: string;
-    description: string | null;
-    position: number;
-    assignee: { id: string; name: string; email: string } | null;
-    createdAt: string;
-    updatedAt: string;
-  }>;
+  tasks: BoardTask[];
 }
 
 export async function createColumn(input: CreateColumnInput): Promise<ColumnResponse> {

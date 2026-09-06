@@ -3,10 +3,13 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   SortableContext,
+  useSortable,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
-import { Check, Loader2, Plus, X } from 'lucide-react';
+import { Check, GripVertical, ListPlus, Loader2, Plus, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ApiClientError } from '@/lib/api';
@@ -14,6 +17,7 @@ import { EmptyColumn } from './empty-column';
 import { ColumnMenu } from './column-menu';
 import { TaskCard } from './task-card';
 import { cn } from '@/lib/utils';
+import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
 import type { BoardColumn, BoardTask } from '@/lib/types';
 
 const COLUMN_WIDTH = 'w-80'; // 320px per DESIGN.md
@@ -39,14 +43,25 @@ export function KanbanColumn({
   onRenameColumn,
   onDeleteColumn,
 }: KanbanColumnProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: column.id,
+    data: { type: 'column', column },
+    disabled: !canEdit,
+  });
+
   return (
     <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn(
-        'flex shrink-0 flex-col gap-2 rounded-lg bg-muted/30 p-3',
+        'flex max-h-full min-h-48 shrink-0 flex-col gap-2 rounded-lg bg-muted/30 p-3',
         COLUMN_WIDTH,
-        'min-h-[200px]',
+        // The original stays in place as a hollow slot while the DragOverlay
+        // renders the copy that follows the cursor.
+        isDragging && 'opacity-40',
       )}
       data-testid={`column-${column.id}`}
+      {...attributes}
     >
       <Header
         column={column}
@@ -54,6 +69,7 @@ export function KanbanColumn({
         isLastColumn={isLastColumn}
         onRename={onRenameColumn}
         onDelete={onDeleteColumn}
+        dragHandleProps={listeners}
       />
 
       <TaskList columnId={column.id} tasks={column.tasks} disabled={!canEdit} onOpenTask={onOpenTask} />
@@ -69,6 +85,40 @@ export function KanbanColumn({
   );
 }
 
+/**
+ * Static copy of a column for the `<DragOverlay>`. Rendering the sortable
+ * component there would register a second node under the same id.
+ */
+export function KanbanColumnOverlay({ column }: { column: BoardColumn }) {
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-2 rounded-lg bg-muted/60 p-3 shadow-md ring-2 ring-primary/20',
+        COLUMN_WIDTH,
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="truncate text-sm font-semibold tracking-tight">{column.title}</h3>
+        <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-secondary px-1.5 text-xs font-medium text-secondary-foreground tabular-nums">
+          {column.tasks.length}
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {column.tasks.slice(0, 3).map((t) => (
+          <div key={t.id} className="rounded-lg border border-border bg-card p-3">
+            <p className="line-clamp-2 text-sm font-medium leading-snug">{t.title}</p>
+          </div>
+        ))}
+        {column.tasks.length > 3 && (
+          <p className="px-1 text-xs text-muted-foreground">
+            +{column.tasks.length - 3} more
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Header
 // ────────────────────────────────────────────────────────────────────────
@@ -79,12 +129,14 @@ function Header({
   isLastColumn,
   onRename,
   onDelete,
+  dragHandleProps,
 }: {
   column: BoardColumn;
   canEdit: boolean;
   isLastColumn: boolean;
   onRename: (columnId: string, title: string) => Promise<void>;
   onDelete: (columnId: string) => Promise<void>;
+  dragHandleProps?: SyntheticListenerMap;
 }) {
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(column.title);
@@ -126,8 +178,7 @@ function Header({
       setRenaming(false);
     } catch (e) {
       const msg = e instanceof ApiClientError ? e.message : 'Could not rename column';
-      // eslint-disable-next-line no-alert
-      alert(msg);
+      toast.error(msg);
       setDraft(column.title);
       setRenaming(false);
     } finally {
@@ -176,7 +227,25 @@ function Header({
 
   return (
     <div className="flex items-center justify-between gap-2">
-      <h3 className="truncate text-sm font-semibold tracking-tight">{column.title}</h3>
+      <div className="flex min-w-0 items-center gap-1">
+        {/*
+          A dedicated handle, not the whole header. The column body contains
+          draggable task cards, so making the entire column its own drag
+          surface would make every task drag ambiguous.
+        */}
+        {canEdit && (
+          <button
+            type="button"
+            className="-ml-1 cursor-grab touch-none rounded-md p-0.5 text-muted-foreground/50 transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+            aria-label={`Reorder ${column.title} column`}
+            title="Drag to reorder"
+            {...dragHandleProps}
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+        )}
+        <h3 className="truncate text-sm font-semibold tracking-tight">{column.title}</h3>
+      </div>
       <div className="flex items-center gap-1">
         <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-secondary px-1.5 text-xs font-medium text-secondary-foreground tabular-nums">
           {column.tasks.length}
@@ -210,7 +279,12 @@ function TaskList({
   disabled: boolean;
   onOpenTask: (task: BoardTask) => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `column-${columnId}`, data: { type: 'column', columnId } });
+  // `column-dropzone`, not `column`: the column shell itself is now a sortable
+  // with type `column`, and the drag handlers key off these type tags.
+  const { setNodeRef, isOver } = useDroppable({
+    id: `column-dropzone-${columnId}`,
+    data: { type: 'column-dropzone', columnId },
+  });
   const taskIds = tasks.map((t) => t.id);
 
   return (
@@ -218,7 +292,7 @@ function TaskList({
       <div
         ref={setNodeRef}
         className={cn(
-          'flex min-h-[40px] flex-1 flex-col gap-2 rounded-md transition-colors',
+          'flex min-h-10 flex-1 flex-col gap-2 overflow-y-auto rounded-md transition-colors',
           isOver && 'bg-accent/40 ring-2 ring-primary/30',
         )}
       >
@@ -270,27 +344,18 @@ function InlineAddTask({
   };
 
   if (!open) {
+    // One affordance, not two. The full form is reachable from the expanded
+    // state, so the resting column shows a single quiet action.
     return (
-      <div className="mt-auto flex flex-col gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-muted-foreground"
-          onClick={() => setOpen(true)}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Add task
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start text-xs text-muted-foreground/70"
-          onClick={onOpenDialog}
-          title="Open the full task form"
-        >
-          ✎ Detailed form
-        </Button>
-      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="mt-auto w-full justify-start text-muted-foreground"
+        onClick={() => setOpen(true)}
+      >
+        <Plus className="mr-2 h-4 w-4" />
+        Add task
+      </Button>
     );
   }
 
@@ -318,8 +383,19 @@ function InlineAddTask({
         onClick={() => void submit()}
         disabled={busy || title.trim().length === 0}
         aria-label="Add task"
+        title="Add task"
       >
         {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        onClick={onOpenDialog}
+        disabled={busy}
+        aria-label="Add task with description and assignee"
+        title="More options"
+      >
+        <ListPlus className="h-3.5 w-3.5" />
       </Button>
       <Button
         variant="ghost"

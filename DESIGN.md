@@ -46,7 +46,16 @@ If a shadcn component exists, use it. Custom implementations are only for **app-
 
 **Two modes: light (primary), dark (secondary support).** Token-driven via CSS variables — never hardcode hex in components.
 
-### Tokens (configure in `tailwind.config.ts` + `globals.css` via `:root` and `.dark`)
+### Tokens (defined in `src/app/globals.css`)
+
+There is **no `tailwind.config.ts`** — the project is on Tailwind v4, where the
+whole theme lives in CSS. Tokens are declared on `:root` / `.dark` and mapped to
+utility namespaces in the `@theme inline` block of the same file.
+
+Values below are the design intent. In `globals.css` each is written as a
+**complete color** (`hsl(0 0% 100%)`), not as bare `H S% L%` channels — shadcn's
+primitives feed these straight into `color-mix()` and into Sonner's `--normal-bg`,
+which require a real color.
 
 Light theme (default):
 - `background`: `0 0% 100%` (pure white)
@@ -149,14 +158,27 @@ Tailwind's default 4px scale. Use semantic tokens, not arbitrary values.
 Premium products lean on **subtle borders + soft shadows**, not heavy drop shadows. The Kanban UI has lots of cards — heavy shadows would feel busy.
 
 ### Use
-- `shadow-sm` for raised cards on hover (task cards, board cards)
-- `shadow-md` for modals and popovers
-- `shadow-lg` sparingly — only for drag preview and toasts
+Tailwind v4 shifted every shadow name one step heavier (v3 `shadow-sm` is now
+`shadow-xs`, v3 `shadow` is now `shadow-sm`, and so on). The names below are v4.
+
+- `shadow-xs` for raised cards on hover (task cards, board cards)
+- `shadow-sm` for modals and popovers
+- `shadow-md` sparingly — only for drag preview and toasts
 - `border border-border` on all input fields, cards, dividers
-- `rounded-lg` is the default radius (matches shadcn defaults)
+- `rounded-lg` is the default radius. The full rule:
+
+| Element kind | Radius |
+|---|---|
+| Containers — card, dialog, popover, dropdown/select/command panel, alert, tooltip | `rounded-lg` |
+| Controls — button, input, textarea, select trigger, input group | `rounded-lg` |
+| Small items nested inside a `rounded-lg` container — menu items, select items, tabs trigger, kbd, icon tiles | `rounded-md` |
+| Pills and avatars — badge, role badge, avatar, scrollbar thumb | `rounded-full` |
+
+Nothing else. No `rounded-xl`, `rounded-4xl`, `rounded-sm`, or arbitrary
+`rounded-[...]` values.
 
 ### Drag state
-- Task being dragged: `shadow-lg ring-2 ring-primary/20 rotate-1 opacity-90`
+- Task being dragged: `shadow-md ring-2 ring-primary/20 rotate-1 opacity-90`
 - Drop target column: `ring-2 ring-primary/30 bg-accent/40` (subtle highlight)
 
 ---
@@ -309,7 +331,12 @@ Position: top-right. Max 3 visible at once.
 ## Verification Checklist (before any UI merge)
 
 - [ ] Uses shadcn components (no Material/Chakra/MUI/Bootstrap)
-- [ ] Colors come from theme tokens (no hardcoded hex outside `tailwind.config.ts`)
+- [ ] Colors come from theme tokens (no hardcoded hex outside `globals.css`)
+- [ ] **The generated CSS actually contains the utilities the components reference.**
+      Tailwind drops classes it cannot parse *silently* — no error, no warning. After
+      adding or upgrading shadcn components, grep the build output for the utilities
+      they rely on before trusting the screenshot:
+      `grep -o 'animate-in' frontend/.next/static/css/*.css`
 - [ ] Inter font loads via `next/font` and applies
 - [ ] All states handled: empty, loading, error, success
 - [ ] All interactive elements keyboard-accessible

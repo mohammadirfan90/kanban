@@ -1,33 +1,26 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { Column, Task } from '@prisma/client';
+import type { Column } from '@prisma/client';
 import { BoardsService } from '../boards/boards.service';
+import { keyBetween, keysBetween, type OrderKey } from '../common/ordering/fractional-index';
+import { withOrderingRetry } from '../common/ordering/ordering-retry';
+import { TASK_INCLUDE, toTaskView, type TaskView } from '../common/task-view';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateColumnDto } from './dto/create-column.dto';
 import { ReorderColumnsDto } from './dto/reorder-columns.dto';
 import { UpdateColumnDto } from './dto/update-column.dto';
 
-export interface TaskView {
-  id: string;
-  title: string;
-  description: string | null;
-  position: number;
-  assignee: { id: string; name: string; email: string } | null;
-  createdAt: string;
-  updatedAt: string;
-}
+// Shared with the board and task endpoints — see common/task-view.ts.
+export type { TaskView } from '../common/task-view';
 
 export interface ColumnResponse {
   id: string;
   boardId: string;
   title: string;
-  position: number;
+  position: OrderKey;
   createdAt: string;
   updatedAt: string;
   tasks: TaskView[];
 }
-
-/** Default gap between consecutive columns when reordering. Leaves headroom for fractional inserts. */
-const COLUMN_POSITION_STEP = 1024;
 
 @Injectable()
 export class ColumnsService {
@@ -47,19 +40,13 @@ export class ColumnsService {
     return {
       tasks: {
         orderBy: { position: 'asc' as const },
-        include: {
-          assignee: {
-            select: { id: true, name: true, email: true },
-          },
-        },
+        include: TASK_INCLUDE,
       },
     };
   }
 
   private toColumnResponse(
-    column: Column & {
-      tasks: (Task & { assignee: { id: string; name: string; email: string } | null })[];
-    },
+    column: Column & { tasks: Parameters<typeof toTaskView>[0][] },
   ): ColumnResponse {
     return {
       id: column.id,
@@ -68,50 +55,43 @@ export class ColumnsService {
       position: column.position,
       createdAt: column.createdAt.toISOString(),
       updatedAt: column.updatedAt.toISOString(),
-      tasks: column.tasks.map((t) => ({
-        id: t.id,
-        title: t.title,
-        description: t.description,
-        position: t.position,
-        assignee: t.assignee,
-        createdAt: t.createdAt.toISOString(),
-        updatedAt: t.updatedAt.toISOString(),
-      })),
+      tasks: column.tasks.map((t) => toTaskView(t)),
     };
   }
 
   /**
    * Create a column on a board. Caller must have EDITOR+ access.
-   * If `dto.position` is omitted, append after the highest existing position.
+   * New columns always append; ordering keys are server-generated.
    */
   async create(userId: string, dto: CreateColumnDto): Promise<ColumnResponse> {
     await this.boards.assertAccess(userId, dto.boardId, 'EDITOR');
 
-    let position = dto.position;
-    if (position === undefined) {
-      const max = await this.prisma.column.findFirst({
+    // Append after the current last column, re-reading the tail on each
+    // attempt so two concurrent creates don't both append after the same key.
+    const created = await withOrderingRetry(async () => {
+      const last = await this.prisma.column.findFirst({
         where: { boardId: dto.boardId },
         orderBy: { position: 'desc' },
         select: { position: true },
       });
-      position = max ? max.position + COLUMN_POSITION_STEP : COLUMN_POSITION_STEP;
-    }
 
-    const created = await this.prisma.column.create({
-      data: {
-        boardId: dto.boardId,
-        title: dto.title,
-        position,
-      },
-      include: this.defaultInclude(),
-    });
+      return this.prisma.column.create({
+        data: {
+          boardId: dto.boardId,
+          title: dto.title,
+          position: keyBetween(last?.position ?? null, null),
+        },
+        include: this.defaultInclude(),
+      });
+    }, `create column on board ${dto.boardId}`);
 
     this.logger.log(`Column ${created.id} created on board ${dto.boardId} by ${userId}`);
     return this.toColumnResponse(created);
   }
 
   /**
-   * Update a column's title and/or position. Caller must have EDITOR+ access on the column's board.
+   * Rename a column. Caller must have EDITOR+ access on the column's board.
+   * Position is not settable here — reordering goes through `reorder`.
    */
   async update(userId: string, columnId: string, dto: UpdateColumnDto): Promise<ColumnResponse> {
     const existing = await this.prisma.column.findUnique({
@@ -124,9 +104,8 @@ export class ColumnsService {
 
     await this.boards.assertAccess(userId, existing.boardId, 'EDITOR');
 
-    const data: { title?: string; position?: number } = {};
+    const data: { title?: string } = {};
     if (dto.title !== undefined) data.title = dto.title;
-    if (dto.position !== undefined) data.position = dto.position;
 
     const updated = await this.prisma.column.update({
       where: { id: columnId },
@@ -198,23 +177,46 @@ export class ColumnsService {
       );
     }
 
-    // Compute fresh positions as 1024 * (i + 1) to leave headroom for fractional inserts.
-    const updates = dto.columnIds.map((id, index) =>
-      this.prisma.column.update({
-        where: { id },
-        data: { position: COLUMN_POSITION_STEP * (index + 1) },
-      }),
+    // Allocate a fresh block of keys entirely AFTER the current maximum.
+    //
+    // The obvious approach — hand out a0, a1, a2… from the start of the key
+    // space — deadlocks against the unique (boardId, position) index. Postgres
+    // enforces a unique index per statement, not at commit, so a reorder that
+    // merely swaps two columns would assign B's key to A while B still holds
+    // it and fail mid-transaction. Allocating past the tail means no new key
+    // can equal a key still in use, so the updates can be applied in any order
+    // without an intermediate placeholder pass or a DEFERRABLE constraint.
+    //
+    // Keys grow slowly as a result (a0 → a1 → … → b00), which is inherent to
+    // fractional indexing and costs a byte or two per reorder — cheap next to
+    // the alternative.
+    const refreshed = await withOrderingRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const last = await tx.column.findFirst({
+            where: { boardId: dto.boardId },
+            orderBy: { position: 'desc' },
+            select: { position: true },
+          });
+
+          const keys = keysBetween(last?.position ?? null, null, dto.columnIds.length);
+
+          // Sequential rather than Promise.all: concurrent updates inside one
+          // transaction can interleave on the same index pages and deadlock.
+          for (const [index, id] of dto.columnIds.entries()) {
+            await tx.column.update({ where: { id }, data: { position: keys[index] } });
+          }
+
+          return tx.column.findMany({
+            where: { boardId: dto.boardId },
+            orderBy: { position: 'asc' },
+            include: this.defaultInclude(),
+          });
+        }),
+      `reorder columns on board ${dto.boardId}`,
     );
 
-    await this.prisma.$transaction(updates);
     this.logger.log(`Columns reordered on board ${dto.boardId} by ${userId}`);
-
-    // Re-fetch in the new order, with tasks included.
-    const refreshed = await this.prisma.column.findMany({
-      where: { boardId: dto.boardId },
-      orderBy: { position: 'asc' },
-      include: this.defaultInclude(),
-    });
     return refreshed.map((c) => this.toColumnResponse(c));
   }
 }

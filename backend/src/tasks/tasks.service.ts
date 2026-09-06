@@ -1,32 +1,19 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { Task } from '@prisma/client';
+import type { TaskPriority } from '@prisma/client';
 import { BoardsService } from '../boards/boards.service';
+import { keyBetween, keyForIndex } from '../common/ordering/fractional-index';
+import { withOrderingRetry } from '../common/ordering/ordering-retry';
+import { TASK_INCLUDE, toTaskView, type TaskView } from '../common/task-view';
+import { LabelsService } from '../labels/labels.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
-export interface TaskResponse {
-  id: string;
-  columnId: string;
-  title: string;
-  description: string | null;
-  position: number;
-  assignee: { id: string; name: string; email: string } | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Default position step when appending a new task to the end of a column. */
-const TASK_POSITION_STEP = 1;
-
-/**
- * Precision threshold for the fractional-indexing rebalance trigger.
- * If a computed position is closer than this to an existing task, we
- * renumber the target column instead of storing a value that Float64
- * can no longer distinguish.
- */
-const REBALANCE_THRESHOLD = 1e-10;
+// Re-exported so existing importers keep working; the shape itself lives in
+// common/task-view.ts, shared with the board and column responses.
+export type { TaskLabelView, TaskView } from '../common/task-view';
+export type TaskResponse = TaskView;
 
 @Injectable()
 export class TasksService {
@@ -35,30 +22,15 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly boards: BoardsService,
+    private readonly labels: LabelsService,
   ) {}
 
-  /** Eager-load the assignee user (id/name/email only — never passwordHash). */
   private defaultInclude() {
-    return {
-      assignee: {
-        select: { id: true, name: true, email: true },
-      },
-    };
+    return TASK_INCLUDE;
   }
 
-  private toTaskResponse(
-    task: Task & { assignee: { id: string; name: string; email: string } | null },
-  ): TaskResponse {
-    return {
-      id: task.id,
-      columnId: task.columnId,
-      title: task.title,
-      description: task.description,
-      position: task.position,
-      assignee: task.assignee,
-      createdAt: task.createdAt.toISOString(),
-      updatedAt: task.updatedAt.toISOString(),
-    };
+  private toTaskResponse(task: Parameters<typeof toTaskView>[0]): TaskResponse {
+    return toTaskView(task);
   }
 
   /**
@@ -133,24 +105,48 @@ export class TasksService {
       await this.validateAssignee(dto.assigneeId, column.boardId, { allowUnset: false });
     }
 
-    // Compute position: append after max(existing positions) in this column.
-    const max = await this.prisma.task.findFirst({
-      where: { columnId: dto.columnId },
-      orderBy: { position: 'desc' },
-      select: { position: true },
-    });
-    const position = (max?.position ?? 0) + TASK_POSITION_STEP;
+    const labelIds = dto.labelIds
+      ? await this.labels.assertLabelsOnBoard(dto.labelIds, column.boardId)
+      : [];
 
-    const created = await this.prisma.task.create({
-      data: {
-        columnId: dto.columnId,
-        title: dto.title,
-        description: dto.description ?? null,
-        assigneeId: dto.assigneeId ?? null,
-        position,
-      },
-      include: this.defaultInclude(),
-    });
+    // Append after the current last task. Re-read the tail on every attempt:
+    // two clients creating into the same column simultaneously would otherwise
+    // both append after the same key and collide on the unique index.
+    const created = await withOrderingRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const last = await tx.task.findFirst({
+            where: { columnId: dto.columnId },
+            orderBy: { position: 'desc' },
+            select: { position: true },
+          });
+
+          // Atomic increment, not max(number) + 1: the latter lets two
+          // concurrent creates read the same maximum and claim the same key.
+          const board = await tx.board.update({
+            where: { id: column.boardId },
+            data: { taskCounter: { increment: 1 } },
+            select: { taskCounter: true },
+          });
+
+          return tx.task.create({
+            data: {
+              columnId: dto.columnId,
+              boardId: column.boardId,
+              number: board.taskCounter,
+              title: dto.title,
+              description: dto.description ?? null,
+              assigneeId: dto.assigneeId ?? null,
+              priority: dto.priority ?? null,
+              dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+              position: keyBetween(last?.position ?? null, null),
+              labels: { create: labelIds.map((labelId) => ({ labelId })) },
+            },
+            include: this.defaultInclude(),
+          });
+        }),
+      `create task in column ${dto.columnId}`,
+    );
 
     this.logger.log(`Task ${created.id} created in column ${dto.columnId} by ${userId}`);
     return this.toTaskResponse(created);
@@ -178,16 +174,43 @@ export class TasksService {
       await this.validateAssignee(dto.assigneeId, boardId, { allowUnset: true });
     }
 
-    // Build a partial update payload.
-    const data: { title?: string; description?: string; assigneeId?: string | null } = {};
+    // Build a partial update payload. `undefined` means "leave alone"; `null`
+    // is an explicit clear, which is why each field is tested against
+    // `undefined` rather than for truthiness.
+    const data: {
+      title?: string;
+      description?: string;
+      assigneeId?: string | null;
+      priority?: TaskPriority | null;
+      dueDate?: Date | null;
+    } = {};
     if (dto.title !== undefined) data.title = dto.title;
     if (dto.description !== undefined) data.description = dto.description;
-    if (dto.assigneeId !== undefined) data.assigneeId = dto.assigneeId; // null unassigns, string sets, undefined left out
+    if (dto.assigneeId !== undefined) data.assigneeId = dto.assigneeId;
+    if (dto.priority !== undefined) data.priority = dto.priority;
+    if (dto.dueDate !== undefined) data.dueDate = dto.dueDate ? new Date(dto.dueDate) : null;
 
-    const updated = await this.prisma.task.update({
-      where: { id: taskId },
-      data,
-      include: this.defaultInclude(),
+    // labelIds is the desired final set, not a delta — validate before the
+    // transaction so a bad id fails without having deleted anything.
+    const labelIds =
+      dto.labelIds !== undefined
+        ? await this.labels.assertLabelsOnBoard(dto.labelIds, boardId)
+        : null;
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      if (labelIds !== null) {
+        await tx.taskLabel.deleteMany({ where: { taskId } });
+        if (labelIds.length > 0) {
+          await tx.taskLabel.createMany({
+            data: labelIds.map((labelId) => ({ taskId, labelId })),
+          });
+        }
+      }
+      return tx.task.update({
+        where: { id: taskId },
+        data,
+        include: this.defaultInclude(),
+      });
     });
     return this.toTaskResponse(updated);
   }
@@ -202,125 +225,80 @@ export class TasksService {
   }
 
   /**
-   * Move a task within or across columns using fractional indexing.
-   * Caller must have EDITOR+ on the source task's board.
+   * Move a task within a column or across columns on the same board.
+   * Caller must have EDITOR+ on the task's board.
    *
-   * Algorithm:
-   *   1. Load the source task + assert EDITOR on its parent board.
-   *   2. Verify the target column exists AND belongs to the same board.
-   *      (Cross-board moves are out of scope and would require re-checking
-   *       the assignee against a different member list — security smell.)
-   *   3. Load the target column's tasks (excluding the source if same-column).
-   *   4. Compute the new position as a midpoint of the gap at `newIndex`,
-   *      or 1 for an empty column.
-   *   5. If the computed position is closer than `REBALANCE_THRESHOLD` to any
-   *      existing task, renumber every task in the target column to evenly
-   *      spaced integers (1, 2, 3, ...) and place the moved task at
-   *      `newIndex` in the new ordering. Otherwise just persist the new
-   *      position.
+   * Ordering is conflict-free by construction:
+   *
+   *   1. Neighbours are read inside the retry callback, so every attempt
+   *      computes its key from the *current* order rather than a stale one.
+   *   2. The new key is generated strictly between the neighbours at
+   *      `newIndex`, so it cannot equal any other key already in that column.
+   *   3. A unique index on `(columnId, position)` rejects the one case step 2
+   *      cannot prevent — a concurrent writer that read the same neighbours
+   *      and computed the same key. The loser retries, now sees the winner's
+   *      key among the siblings, and lands beside it instead of on it.
+   *
+   * The whole read-compute-write runs in a transaction so a move never
+   * observes a half-applied move by someone else. The previous implementation
+   * did the same work with no transaction and no uniqueness guarantee: eight
+   * concurrent moves to index 0 left seven tasks sharing position 0.5.
+   *
+   * Cross-board moves are rejected. Allowing them would silently carry an
+   * assignee onto a board they may not be a member of.
    */
   async move(userId: string, taskId: string, dto: MoveTaskDto): Promise<TaskResponse> {
-    // 1. Load + authorize.
     const sourceBoardId = await this.resolveBoardIdForTask(taskId);
     await this.boards.assertAccess(userId, sourceBoardId, 'EDITOR');
 
-    // 2. Target column must exist AND be on the same board.
-    const targetColumn = await this.prisma.column.findUnique({
-      where: { id: dto.targetColumnId },
-      select: { id: true, boardId: true },
-    });
-    if (!targetColumn || targetColumn.boardId !== sourceBoardId) {
-      throw new NotFoundException('Target column not found on this board');
-    }
+    const updated = await withOrderingRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          // Re-read inside the transaction: the task may have been moved or
+          // deleted between the authorization check and this attempt.
+          const task = await tx.task.findUnique({
+            where: { id: taskId },
+            select: { id: true, columnId: true },
+          });
+          if (!task) {
+            throw new NotFoundException('Task not found');
+          }
 
-    // 3. Load target column's tasks, excluding the source if same-column.
-    const allTargetTasks = await this.prisma.task.findMany({
-      where: { columnId: dto.targetColumnId },
-      orderBy: { position: 'asc' },
-      select: { id: true, position: true },
-    });
-    const targetTasks = allTargetTasks.filter((t) => t.id !== taskId);
+          const targetColumn = await tx.column.findUnique({
+            where: { id: dto.targetColumnId },
+            select: { id: true, boardId: true },
+          });
+          if (!targetColumn || targetColumn.boardId !== sourceBoardId) {
+            throw new NotFoundException('Target column not found on this board');
+          }
 
-    // 4. Compute the would-be position.
-    const newPosition = this.computeNewPosition(targetTasks, dto.newIndex);
+          // Exclude the moved task: including it would let the task act as its
+          // own neighbour, and `keyBetween` would be asked to find a key
+          // between a value and itself.
+          const siblings = await tx.task.findMany({
+            where: { columnId: dto.targetColumnId, id: { not: taskId } },
+            orderBy: { position: 'asc' },
+            select: { position: true },
+          });
 
-    // 5. Rebalance if precision exhausted.
-    if (this.needsRebalance(targetTasks, newPosition)) {
-      const placed = await this.rebalanceAndPlace(targetTasks, taskId, dto.newIndex);
-      const updated = await this.prisma.task.update({
-        where: { id: taskId },
-        data: {
-          columnId: dto.targetColumnId,
-          position: placed.movedTaskPosition,
-        },
-        include: this.defaultInclude(),
-      });
-      this.logger.log(
-        `Task ${taskId} moved to column ${dto.targetColumnId} (rebalance, position ${placed.movedTaskPosition}) by ${userId}`,
-      );
-      return this.toTaskResponse(updated);
-    }
+          return tx.task.update({
+            where: { id: taskId },
+            data: {
+              columnId: dto.targetColumnId,
+              position: keyForIndex(
+                siblings.map((s) => s.position),
+                dto.newIndex,
+              ),
+            },
+            include: this.defaultInclude(),
+          });
+        }),
+      `move task ${taskId}`,
+    );
 
-    const updated = await this.prisma.task.update({
-      where: { id: taskId },
-      data: { columnId: dto.targetColumnId, position: newPosition },
-      include: this.defaultInclude(),
-    });
     this.logger.log(
-      `Task ${taskId} moved to column ${dto.targetColumnId} position ${newPosition} by ${userId}`,
+      `Task ${taskId} moved to column ${dto.targetColumnId} position ${updated.position} by ${userId}`,
     );
     return this.toTaskResponse(updated);
-  }
-
-  /**
-   * Compute the new fractional position based on existing target tasks and
-   * the 0-based `newIndex` AFTER the move.
-   *   - empty column → 1
-   *   - newIndex = 0 → first.position / 2 (insert above the head)
-   *   - newIndex >= length → last.position + 1 (append)
-   *   - otherwise → midpoint of neighbors at newIndex-1 and newIndex
-   */
-  private computeNewPosition(
-    targetTasks: Array<{ id: string; position: number }>,
-    newIndex: number,
-  ): number {
-    if (targetTasks.length === 0) return 1;
-    if (newIndex === 0) return targetTasks[0].position / 2;
-    if (newIndex >= targetTasks.length) {
-      return targetTasks[targetTasks.length - 1].position + 1;
-    }
-    const prev = targetTasks[newIndex - 1];
-    const next = targetTasks[newIndex];
-    return (prev.position + next.position) / 2;
-  }
-
-  /** True when the computed position is dangerously close to an existing task. */
-  private needsRebalance(targetTasks: Array<{ position: number }>, newPosition: number): boolean {
-    return targetTasks.some((t) => Math.abs(t.position - newPosition) < REBALANCE_THRESHOLD);
-  }
-
-  /**
-   * Renumber every task in the target column to evenly spaced integers
-   * (1, 2, 3, ...) and place the moved task at `newIndex` in the new ordering.
-   * Wraps the renumber in a single transaction for atomicity.
-   */
-  private async rebalanceAndPlace(
-    targetTasksExclMoved: Array<{ id: string; position: number }>,
-    movedTaskId: string,
-    newIndex: number,
-  ): Promise<{ movedTaskPosition: number }> {
-    const ordered: string[] = targetTasksExclMoved.map((t) => t.id);
-    const insertAt = Math.min(newIndex, ordered.length);
-    ordered.splice(insertAt, 0, movedTaskId);
-
-    const updates = ordered.map((id, i) =>
-      this.prisma.task.update({
-        where: { id },
-        data: { position: i + 1 },
-      }),
-    );
-    await this.prisma.$transaction(updates);
-
-    return { movedTaskPosition: insertAt + 1 };
   }
 }

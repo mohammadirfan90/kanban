@@ -31,14 +31,14 @@ export function BoardHeader({ board, onShareClick, onSignOut }: BoardHeaderProps
   const overflow = board.members.length - visible.length;
 
   return (
-    <header className="border-b bg-background/80 backdrop-blur-sm">
+    <header className="border-b bg-background/80 backdrop-blur-xs">
       <div className="container flex h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-3">
           <Link
             href="/boards"
             aria-label="Back to boards"
             title="Back to boards"
-            className="-ml-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+            className="-ml-2 inline-flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>

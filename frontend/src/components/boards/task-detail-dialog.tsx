@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -44,7 +44,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiClientError } from '@/lib/api';
-import type { BoardMemberView, BoardTask } from '@/lib/types';
+import { DueDateField, LabelField, PriorityField } from './task-fields';
+import { DueDate, LabelChip, PriorityIndicator } from './task-meta';
+import type { BoardLabel, BoardMemberView, BoardTask, TaskPriority } from '@/lib/types';
 
 const editSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200, 'Title must be at most 200 characters'),
@@ -56,6 +58,9 @@ const editSchema = z.object({
 /** Form-shape submitted to onSave. Exported so parents can type-check. */
 export type TaskEditValues = Omit<z.infer<typeof editSchema>, 'assigneeId'> & {
   assigneeId: string | null;
+  priority: TaskPriority | null;
+  dueDate: string | null;
+  labelIds: string[];
 };
 
 type EditValues = z.infer<typeof editSchema>;
@@ -67,11 +72,12 @@ export interface TaskDetailDialogProps {
   onOpenChange: (open: boolean) => void;
   task: BoardTask | null;
   members: BoardMemberView[];
+  boardId: string;
+  boardLabels: BoardLabel[];
+  /** Lifts a label created from inside the dialog into the board's list. */
+  onLabelCreated?: (label: BoardLabel) => void;
   canEdit: boolean;
-  onSave: (
-    taskId: string,
-    values: Omit<EditValues, 'assigneeId'> & { assigneeId: string | null },
-  ) => Promise<void>;
+  onSave: (taskId: string, values: TaskEditValues) => Promise<void>;
   onDelete: (taskId: string) => Promise<void>;
 }
 
@@ -80,6 +86,9 @@ export function TaskDetailDialog({
   onOpenChange,
   task,
   members,
+  boardId,
+  boardLabels,
+  onLabelCreated,
   canEdit,
   onSave,
   onDelete,
@@ -88,6 +97,20 @@ export function TaskDetailDialog({
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+
+  // Priority, due date and labels are not text inputs, so they sit outside
+  // react-hook-form. They re-seed whenever a different task is opened — the
+  // dialog instance is reused across tasks, so without this the second task
+  // opened would inherit the first one's values.
+  const [priority, setPriority] = useState<TaskPriority | null>(task?.priority ?? null);
+  const [dueDate, setDueDate] = useState<string | null>(task?.dueDate ?? null);
+  const [labelIds, setLabelIds] = useState<string[]>(task?.labels.map((l) => l.id) ?? []);
+
+  useEffect(() => {
+    setPriority(task?.priority ?? null);
+    setDueDate(task?.dueDate ?? null);
+    setLabelIds(task?.labels.map((l) => l.id) ?? []);
+  }, [task]);
 
   const form = useForm<EditValues>({
     resolver: zodResolver(editSchema),
@@ -144,6 +167,9 @@ export function TaskDetailDialog({
         description: values.description,
         assigneeId:
           values.assigneeId && values.assigneeId !== UNASSIGNED ? values.assigneeId : null,
+        priority,
+        dueDate,
+        labelIds,
       });
       toast.success('Task saved');
       setMode('view');
@@ -164,7 +190,9 @@ export function TaskDetailDialog({
       >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-base">Task</DialogTitle>
+            <DialogTitle className="text-base">
+              <span className="font-mono text-sm text-muted-foreground">{task.key}</span>
+            </DialogTitle>
             <DialogDescription>
               {mode === 'view' ? 'View task details' : 'Edit task details'}
             </DialogDescription>
@@ -172,10 +200,19 @@ export function TaskDetailDialog({
 
           {mode === 'view' ? (
             <div className="space-y-4">
-              <div>
+              <div className="space-y-2">
                 <h3 className="text-lg font-semibold leading-tight tracking-tight">
                   {task.title}
                 </h3>
+                {(task.priority || task.dueDate || task.labels.length > 0) && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                    {task.priority && <PriorityIndicator priority={task.priority} showLabel />}
+                    {task.dueDate && <DueDate dueDate={task.dueDate} />}
+                    {task.labels.map((label) => (
+                      <LabelChip key={label.id} label={label} />
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -302,6 +339,27 @@ export function TaskDetailDialog({
                       <FormMessage />
                     </FormItem>
                   )}
+                />
+
+                <PriorityField
+                  value={priority}
+                  onChange={setPriority}
+                  disabled={form.formState.isSubmitting}
+                />
+
+                <DueDateField
+                  value={dueDate}
+                  onChange={setDueDate}
+                  disabled={form.formState.isSubmitting}
+                />
+
+                <LabelField
+                  boardId={boardId}
+                  boardLabels={boardLabels}
+                  selectedIds={labelIds}
+                  onChange={setLabelIds}
+                  onLabelCreated={onLabelCreated}
+                  disabled={form.formState.isSubmitting}
                 />
 
                 {serverError && (

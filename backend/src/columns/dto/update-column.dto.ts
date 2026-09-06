@@ -1,4 +1,4 @@
-import { IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class UpdateColumnDto {
   @IsOptional()
@@ -7,8 +7,6 @@ export class UpdateColumnDto {
   @MaxLength(100, { message: 'Title must be at most 100 characters' })
   title?: string;
 
-  @IsOptional()
-  @IsNumber({ maxDecimalPlaces: 6 })
-  @Min(0)
-  position?: number;
+  // `position` intentionally omitted — see CreateColumnDto. Reordering goes
+  // through PATCH /columns/reorder, which places by index and is retry-safe.
 }

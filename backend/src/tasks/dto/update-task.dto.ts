@@ -1,4 +1,16 @@
-import { IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsEnum,
+  IsISO8601,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
+import { TaskPriority } from '@prisma/client';
 
 export class UpdateTaskDto {
   @IsOptional()
@@ -21,4 +33,26 @@ export class UpdateTaskDto {
   @ValidateIf((_, value) => value !== null)
   @IsUUID('4', { message: 'assigneeId must be a valid UUID' })
   assigneeId?: string | null;
+
+  /** `null` clears the priority; omit to leave it unchanged. */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsEnum(TaskPriority, { message: 'priority must be LOW, MEDIUM, HIGH or URGENT' })
+  priority?: TaskPriority | null;
+
+  /** `null` clears the due date; omit to leave it unchanged. */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsISO8601({}, { message: 'dueDate must be an ISO-8601 date string' })
+  dueDate?: string | null;
+
+  /**
+   * Replaces the task's labels wholesale — the array is the desired final set,
+   * not a delta. An empty array clears them. Omit the field to leave them alone.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20, { message: 'A task can carry at most 20 labels' })
+  @IsUUID('4', { each: true, message: 'labelIds must contain valid UUIDs' })
+  labelIds?: string[];
 }

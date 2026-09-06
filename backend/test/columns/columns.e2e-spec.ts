@@ -15,7 +15,7 @@ interface UserFixture {
 
 interface BoardFixture {
   id: string;
-  columns: Array<{ id: string; title: string; position: number }>;
+  columns: Array<{ id: string; title: string; position: string }>;
 }
 
 describe('Columns (e2e)', () => {
@@ -76,7 +76,7 @@ describe('Columns (e2e)', () => {
     ownersBoard = {
       id: ownersBoardRes.body.id,
       columns: ownersBoardRes.body.columns.map(
-        (c: { id: string; title: string; position: number }) => ({
+        (c: { id: string; title: string; position: string }) => ({
           id: c.id,
           title: c.title,
           position: c.position,
@@ -122,8 +122,10 @@ describe('Columns (e2e)', () => {
   // POST /api/columns
   // ──────────────────────────────────────────────────────────────────────
   describe('POST /api/columns', () => {
-    it('returns 201 + auto-appends position to (max + 1024)', async () => {
-      const maxBefore = Math.max(...ownersBoard.columns.map((c) => c.position));
+    it('returns 201 + appends the new column after the existing ones', async () => {
+      const maxBefore = ownersBoard.columns
+        .map((c) => c.position)
+        .reduce((a, b) => (a > b ? a : b));
 
       const res = await request(app.getHttpServer())
         .post('/api/columns')
@@ -134,22 +136,44 @@ describe('Columns (e2e)', () => {
       expect(res.body.id).toEqual(expect.any(String));
       expect(res.body.boardId).toBe(ownersBoard.id);
       expect(res.body.title).toBe('Backlog');
-      expect(res.body.position).toBe(maxBefore + 1024);
+      expect(res.body.position > maxBefore).toBe(true);
       expect(res.body.tasks).toEqual([]);
 
       // Track for cleanup in later tests.
       ownersBoard.columns.push({ id: res.body.id, title: 'Backlog', position: res.body.position });
     });
 
-    it('returns 201 + honors an explicit position when provided', async () => {
-      const res = await request(app.getHttpServer())
+    it('returns 400 when the client tries to supply a position', async () => {
+      // Ordering keys are opaque and server-generated. Accepting one from the
+      // client would let a caller write a malformed key that breaks
+      // lexicographic sorting for the whole board, and would bypass the
+      // conflict-free placement path. Placement is expressed as intent via
+      // PATCH /columns/reorder instead.
+      await request(app.getHttpServer())
         .post('/api/columns')
         .set('Authorization', `Bearer ${owner.token}`)
         .send({ boardId: ownersBoard.id, title: 'Mid-prio', position: 1500 })
+        .expect(400);
+    });
+
+    it('appends new columns after the existing ones', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/api/columns')
+        .set('Authorization', `Bearer ${owner.token}`)
+        .send({ boardId: ownersBoard.id, title: 'Mid-prio' })
         .expect(201);
 
-      expect(res.body.position).toBe(1500);
-      ownersBoard.columns.push({ id: res.body.id, title: 'Mid-prio', position: 1500 });
+      const all = await prisma.column.findMany({
+        where: { boardId: ownersBoard.id },
+        orderBy: { position: 'asc' },
+        select: { id: true },
+      });
+      expect(all.at(-1)!.id).toBe(res.body.id);
+      ownersBoard.columns.push({
+        id: res.body.id,
+        title: 'Mid-prio',
+        position: res.body.position,
+      });
     });
 
     it('returns 403 when caller is VIEWER on the board', async () => {
@@ -218,13 +242,14 @@ describe('Columns (e2e)', () => {
       patchTarget.title = 'Renamed';
     });
 
-    it('returns 200 + updates position without collisions', async () => {
-      const res = await request(app.getHttpServer())
+    it('returns 400 when the client tries to patch a position', async () => {
+      // Same reasoning as create: reordering goes through
+      // PATCH /columns/reorder, which places by index and is retry-safe.
+      await request(app.getHttpServer())
         .patch(`/api/columns/${patchTarget.id}`)
         .set('Authorization', `Bearer ${owner.token}`)
         .send({ position: 512 })
-        .expect(200);
-      expect(res.body.position).toBe(512);
+        .expect(400);
     });
 
     it('returns 403 when caller is VIEWER on the board', async () => {
@@ -280,7 +305,13 @@ describe('Columns (e2e)', () => {
       // Seed a task directly via Prisma so we can verify cascade without
       // depending on Spec 07's /api/tasks endpoints.
       const seeded = await prisma.task.create({
-        data: { columnId: colB.id, title: 'Doomed Task', position: 1024 },
+        data: {
+          columnId: colB.id,
+          boardId,
+          number: 1,
+          title: 'Doomed Task',
+          position: 'a1',
+        },
       });
       const taskId = seeded.id;
 
@@ -389,8 +420,11 @@ describe('Columns (e2e)', () => {
       expect(res.body).toHaveLength(reversed.length);
       expect(res.body.map((c: { id: string }) => c.id)).toEqual(reversed);
 
-      // Positions should now be 1024, 2048, 3072 (left-to-right after reorder).
-      expect(res.body.map((c: { position: number }) => c.position)).toEqual([1024, 2048, 3072]);
+      // Keys are opaque; what matters is that they ascend left-to-right, so
+      // the response order and any client sort agree.
+      const positions = res.body.map((c: { position: string }) => c.position);
+      expect(new Set(positions).size).toBe(positions.length);
+      expect(positions.every((p: string, i: number) => i === 0 || positions[i - 1] < p)).toBe(true);
 
       // Verify via GET /api/boards/:id that the new order is persisted.
       const boardRes = await request(app.getHttpServer())
@@ -399,7 +433,7 @@ describe('Columns (e2e)', () => {
         .expect(200);
       expect(boardRes.body.columns.map((c: { id: string }) => c.id)).toEqual(reversed);
 
-      reorderBoard.columns = res.body.map((c: { id: string; title: string; position: number }) => ({
+      reorderBoard.columns = res.body.map((c: { id: string; title: string; position: string }) => ({
         id: c.id,
         title: c.title,
         position: c.position,

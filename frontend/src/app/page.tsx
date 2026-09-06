@@ -40,7 +40,7 @@ export default function HomePage() {
             Organize your work, beautifully.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-balance text-lg text-muted-foreground">
-            A calm, fast kanban board with shareable boards, real-time drag-and-drop, and zero clutter.
+            A calm, fast kanban board with shareable boards, instant drag-and-drop, and zero clutter.
             Built with Next.js, NestJS, and Prisma.
           </p>
           <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">

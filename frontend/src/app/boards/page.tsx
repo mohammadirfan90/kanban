@@ -306,9 +306,9 @@ function BoardsGrid({ boards, onEdit, onDelete }: BoardsGridProps) {
           <Link
             key={b.id}
             href={`/boards/${b.id}`}
-            className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-xl"
+            className="block focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-xl"
           >
-            <Card className="flex flex-col p-6 transition-shadow hover:shadow-sm">
+            <Card className="flex flex-col p-6 transition-shadow hover:shadow-xs">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <h3 className="truncate text-base font-semibold tracking-tight">{b.title}</h3>

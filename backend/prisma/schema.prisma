@@ -17,6 +17,15 @@ enum BoardRole {
   VIEWER
 }
 
+// Ordered low -> urgent. Nullable on Task: "no priority set" is a real state
+// and is not the same as LOW.
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
@@ -37,6 +46,12 @@ model Board {
   title       String
   description String?
   ownerId     String
+  // Short prefix for human-readable task keys, e.g. "PR" -> PR-14.
+  key         String
+  // Monotonic per-board task counter. Incremented atomically so two concurrent
+  // creates cannot claim the same number; never decremented, so deleting a task
+  // does not recycle its key.
+  taskCounter Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -44,6 +59,8 @@ model Board {
   owner   User          @relation("BoardOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   members BoardMember[]
   columns Column[]
+  labels  Label[]
+  tasks   Task[]
 
   @@index([ownerId])
   @@map("boards")
@@ -69,34 +86,80 @@ model Column {
   id        String   @id @default(uuid())
   boardId   String
   title     String
-  // Fractional position for stable ordering (Spec 08 uses this for task movement)
-  position  Float
+  // Fractional-index key (base62, ordered lexicographically). See
+  // src/common/ordering/fractional-index.ts for why this is a String and not
+  // a Float. The unique constraint is the backstop that makes concurrent
+  // reorders conflict-free: two racing writers cannot both land on one key.
+  position  String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   board Board  @relation(fields: [boardId], references: [id], onDelete: Cascade)
   tasks Task[]
 
-  @@index([boardId, position])
+  @@unique([boardId, position])
   @@map("columns")
 }
 
+// Labels are per-board, not global: two boards may both want a "bug" label
+// without sharing one row, and deleting a board should take its labels with it.
+model Label {
+  id        String   @id @default(uuid())
+  boardId   String
+  name      String
+  // A palette token ("rose", "amber", ...), not a hex value — DESIGN.md forbids
+  // hardcoded colors, and storing a token lets both themes resolve it.
+  color     String
+  createdAt DateTime @default(now())
+
+  board Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tasks TaskLabel[]
+
+  @@unique([boardId, name])
+  @@map("labels")
+}
+
+model TaskLabel {
+  taskId  String
+  labelId String
+
+  task  Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, labelId])
+  @@index([labelId])
+  @@map("task_labels")
+}
+
 model Task {
-  id          String   @id @default(uuid())
+  id          String        @id @default(uuid())
   columnId    String
+  // Denormalised from column.boardId. Safe because cross-board moves are
+  // rejected, so a task's board never changes. Carries the per-board unique
+  // constraint on `number`, which cannot span a relation.
+  boardId     String
+  // Per-board sequence behind the display key (BOARD.key + "-" + number).
+  number      Int
   title       String
   description String?
-  // Fractional position for drag-and-drop reordering without renumbering
-  position    Float
+  priority    TaskPriority?
+  dueDate     DateTime?
+  // Fractional-index key (base62, ordered lexicographically) — never
+  // renumbered, unlike the Float midpoints this replaced.
+  position    String
   assigneeId  String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  column   Column @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  column   Column      @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  board    Board       @relation(fields: [boardId], references: [id], onDelete: Cascade)
   // If assignee is deleted, task remains but assignee becomes null
-  assignee User?  @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assignee User?       @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  labels   TaskLabel[]
 
-  @@index([columnId, position])
+  @@unique([columnId, position])
+  @@unique([boardId, number])
+  @@index([dueDate])
   @@index([assigneeId])
   @@map("tasks")
 }

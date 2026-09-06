@@ -16,7 +16,7 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
               Organize your work, beautifully.
             </p>
             <p className="text-sm text-muted-foreground">
-              A calm, fast kanban board with shareable boards and real-time drag-and-drop.
+              A calm, fast kanban board with shareable boards and instant drag-and-drop.
             </p>
           </blockquote>
         </div>

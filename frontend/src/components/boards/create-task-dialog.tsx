@@ -34,7 +34,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ApiClientError } from '@/lib/api';
-import type { BoardMemberView } from '@/lib/types';
+import { DueDateField, LabelField, PriorityField } from './task-fields';
+import type { BoardLabel, BoardMemberView, TaskPriority } from '@/lib/types';
 
 const createSchema = z.object({
   title: z.string().min(1, 'Title is required').max(200, 'Title must be at most 200 characters'),
@@ -42,7 +43,11 @@ const createSchema = z.object({
   assigneeId: z.string().optional(),
 });
 
-export type CreateTaskFormValues = z.infer<typeof createSchema>;
+export type CreateTaskFormValues = z.infer<typeof createSchema> & {
+  priority?: TaskPriority | null;
+  dueDate?: string | null;
+  labelIds?: string[];
+};
 
 const UNASSIGNED = '__unassigned__';
 
@@ -52,6 +57,10 @@ export interface CreateTaskDialogProps {
   columnId: string;
   columnTitle: string;
   members: BoardMemberView[];
+  boardId: string;
+  boardLabels: BoardLabel[];
+  /** Lifts a label created from inside the dialog into the board's list. */
+  onLabelCreated?: (label: BoardLabel) => void;
   /** Called with the form values when submit succeeds. */
   onCreate: (columnId: string, values: CreateTaskFormValues) => Promise<void>;
 }
@@ -62,9 +71,18 @@ export function CreateTaskDialog({
   columnId,
   columnTitle,
   members,
+  boardId,
+  boardLabels,
+  onLabelCreated,
   onCreate,
 }: CreateTaskDialogProps) {
   const [serverError, setServerError] = useState<string | null>(null);
+
+  // Outside react-hook-form for the same reason as the detail dialog: none of
+  // these are text inputs, and zod adds nothing over the typed setters.
+  const [priority, setPriority] = useState<TaskPriority | null>(null);
+  const [dueDate, setDueDate] = useState<string | null>(null);
+  const [labelIds, setLabelIds] = useState<string[]>([]);
 
   const form = useForm<CreateTaskFormValues>({
     resolver: zodResolver(createSchema),
@@ -73,6 +91,9 @@ export function CreateTaskDialog({
 
   const reset = () => {
     form.reset({ title: '', description: '', assigneeId: '' });
+    setPriority(null);
+    setDueDate(null);
+    setLabelIds([]);
     setServerError(null);
   };
 
@@ -89,6 +110,9 @@ export function CreateTaskDialog({
         description: values.description?.trim() || undefined,
         // Treat the sentinel as "no assignee" — pass undefined.
         assigneeId: values.assigneeId && values.assigneeId !== UNASSIGNED ? values.assigneeId : undefined,
+        priority,
+        dueDate,
+        labelIds,
       });
       toast.success('Task created');
       reset();
@@ -178,6 +202,27 @@ export function CreateTaskDialog({
                   <FormMessage />
                 </FormItem>
               )}
+            />
+
+            <PriorityField
+              value={priority}
+              onChange={setPriority}
+              disabled={form.formState.isSubmitting}
+            />
+
+            <DueDateField
+              value={dueDate}
+              onChange={setDueDate}
+              disabled={form.formState.isSubmitting}
+            />
+
+            <LabelField
+              boardId={boardId}
+              boardLabels={boardLabels}
+              selectedIds={labelIds}
+              onChange={setLabelIds}
+              onLabelCreated={onLabelCreated}
+              disabled={form.formState.isSubmitting}
             />
 
             {serverError && (

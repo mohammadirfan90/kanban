@@ -6,7 +6,10 @@ import {
   NotFoundException,
   ConflictException,
 } from '@nestjs/common';
-import type { Board, BoardMember, BoardRole, Column, Task, User } from '@prisma/client';
+import type { Board, BoardMember, BoardRole, Column, User } from '@prisma/client';
+import { deriveBoardKey } from '../common/board-key';
+import { keysBetween, type OrderKey } from '../common/ordering/fractional-index';
+import { TASK_INCLUDE, toTaskView, type TaskView } from '../common/task-view';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
@@ -25,11 +28,20 @@ export interface BoardResponse {
   title: string;
   description: string | null;
   ownerId: string;
+  /** Prefix for this board's task keys, e.g. `PR` in `PR-14`. */
+  key: string;
+  labels: BoardLabelView[];
   createdAt: string;
   updatedAt: string;
   role: BoardRole;
   members: BoardMemberView[];
   columns: BoardColumnView[];
+}
+
+export interface BoardLabelView {
+  id: string;
+  name: string;
+  color: string;
 }
 
 export interface BoardMemberView {
@@ -42,19 +54,13 @@ export interface BoardMemberView {
 export interface BoardColumnView {
   id: string;
   title: string;
-  position: number;
+  position: OrderKey;
   tasks: BoardTaskView[];
 }
 
-export interface BoardTaskView {
-  id: string;
-  title: string;
-  description: string | null;
-  position: number;
-  assignee: { id: string; name: string; email: string } | null;
-  createdAt: string;
-  updatedAt: string;
-}
+// The nested task shape is shared with the tasks and columns endpoints so the
+// three cannot drift apart. See common/task-view.ts.
+export type BoardTaskView = TaskView;
 
 @Injectable()
 export class BoardsService {
@@ -138,23 +144,27 @@ export class BoardsService {
   }
 
   async create(userId: string, dto: CreateBoardDto): Promise<BoardResponse> {
-    // Transaction: Board + OWNER BoardMember + 3 default Columns (positions 1024, 2048, 3072)
+    // Transaction: Board + OWNER BoardMember + 3 default Columns
     const created = await this.prisma.$transaction(async (tx) => {
       const board = await tx.board.create({
         data: {
           title: dto.title,
           description: dto.description ?? null,
           ownerId: userId,
+          key: deriveBoardKey(dto.title),
         },
       });
       await tx.boardMember.create({
         data: { boardId: board.id, userId, role: 'OWNER' },
       });
+      // Three evenly-spaced keys rather than hardcoded numbers, so the
+      // defaults sit in the same key space every later insert uses.
+      const [todo, doing, done] = keysBetween(null, null, 3);
       await tx.column.createMany({
         data: [
-          { boardId: board.id, title: 'To Do', position: 1024 },
-          { boardId: board.id, title: 'In Progress', position: 2048 },
-          { boardId: board.id, title: 'Done', position: 3072 },
+          { boardId: board.id, title: 'To Do', position: todo },
+          { boardId: board.id, title: 'In Progress', position: doing },
+          { boardId: board.id, title: 'Done', position: done },
         ],
       });
       return board;
@@ -257,14 +267,15 @@ export class BoardsService {
           user: { select: { id: true, email: true, name: true } },
         },
       },
+      labels: {
+        orderBy: { createdAt: 'asc' as const },
+      },
       columns: {
         orderBy: { position: 'asc' as const },
         include: {
           tasks: {
             orderBy: { position: 'asc' as const },
-            include: {
-              assignee: { select: { id: true, name: true, email: true } },
-            },
+            include: TASK_INCLUDE,
           },
         },
       },
@@ -274,9 +285,8 @@ export class BoardsService {
   private toBoardResponse(
     board: Board & {
       members: (BoardMember & { user: Pick<User, 'id' | 'email' | 'name'> })[];
-      columns: (Column & {
-        tasks: (Task & { assignee: { id: string; name: string; email: string } | null })[];
-      })[];
+      labels: { id: string; name: string; color: string }[];
+      columns: (Column & { tasks: Parameters<typeof toTaskView>[0][] })[];
     },
     callerRole: BoardRole,
   ): BoardResponse {
@@ -285,9 +295,11 @@ export class BoardsService {
       title: board.title,
       description: board.description,
       ownerId: board.ownerId,
+      key: board.key,
       createdAt: board.createdAt.toISOString(),
       updatedAt: board.updatedAt.toISOString(),
       role: callerRole,
+      labels: board.labels.map((l) => ({ id: l.id, name: l.name, color: l.color })),
       members: board.members.map((m) => ({
         userId: m.user.id,
         email: m.user.email,
@@ -298,15 +310,7 @@ export class BoardsService {
         id: c.id,
         title: c.title,
         position: c.position,
-        tasks: c.tasks.map((t) => ({
-          id: t.id,
-          title: t.title,
-          description: t.description,
-          position: t.position,
-          assignee: t.assignee,
-          createdAt: t.createdAt.toISOString(),
-          updatedAt: t.updatedAt.toISOString(),
-        })),
+        tasks: c.tasks.map((t) => toTaskView(t)),
       })),
     };
   }

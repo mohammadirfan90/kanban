@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -10,22 +10,28 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { sortableKeyboardCoordinates } from '@dnd-kit/sortable';
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from '@dnd-kit/sortable';
 import { toast } from 'sonner';
 import { ApiClientError } from '@/lib/api';
-import type { Board, BoardMemberView, BoardTask } from '@/lib/types';
-import { useBoardData } from '@/hooks/use-board-data';
+import type { BoardColumn, BoardMemberView, BoardTask } from '@/lib/types';
+import { useBoardData, type UseBoardDataResult } from '@/hooks/use-board-data';
 import { AddColumnForm } from './add-column-form';
 import { BoardSkeleton } from './board-skeleton';
 import { CreateTaskDialog, type CreateTaskFormValues } from './create-task-dialog';
-import { KanbanColumn } from './kanban-column';
+import { KanbanColumn, KanbanColumnOverlay } from './kanban-column';
 import { TaskCardOverlay } from './task-card';
 import { TaskDetailDialog, type TaskEditValues } from './task-detail-dialog';
 
 export interface KanbanBoardProps {
-  boardId: string;
+  boardId?: string;
+  data?: UseBoardDataResult;
 }
 
 /**
@@ -33,7 +39,8 @@ export interface KanbanBoardProps {
  * between optimistic UI mutations and `useBoardData`. The kanban components
  * inside stay pure presentational.
  */
-export function KanbanBoard({ boardId }: KanbanBoardProps) {
+export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
+  const internalData = useBoardData(data ? '' : (boardId ?? ''));
   const {
     board,
     loading,
@@ -43,11 +50,17 @@ export function KanbanBoard({ boardId }: KanbanBoardProps) {
     handleCreateTask,
     handleUpdateTask,
     handleDeleteTask,
-    handleMoveTask,
     handleCreateColumn,
     handleUpdateColumn,
     handleDeleteColumn,
-  } = useBoardData(boardId);
+    addLabel,
+    beginDrag,
+    previewTaskMove,
+    previewColumnMove,
+    commitTaskDrag,
+    commitColumnDrag,
+    cancelDrag,
+  } = data ?? internalData;
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -68,97 +81,156 @@ export function KanbanBoard({ boardId }: KanbanBoardProps) {
   const [openTask, setOpenTask] = useState<BoardTask | null>(null);
 
   // ── DnD state ─────────────────────────────────────────────────────
+  // Only what the DragOverlay needs. The board itself is reordered live by the
+  // hook's preview calls, so there is no separate "pending move" state to keep
+  // in sync with it.
   const [activeTask, setActiveTask] = useState<BoardTask | null>(null);
-  // Snapshot of `board` taken at drag-start; restored on move failure.
-  const snapshotRef = useRef<Board | null>(null);
+  const [activeColumn, setActiveColumn] = useState<BoardColumn | null>(null);
 
   const columns = useMemo(() => board?.columns ?? [], [board]);
   const members: BoardMemberView[] = useMemo(() => board?.members ?? [], [board]);
+  const columnIds = useMemo(() => columns.map((c) => c.id), [columns]);
+  const boardLabels = useMemo(() => board?.labels ?? [], [board]);
 
   // ── DnD handlers ──────────────────────────────────────────────────
+  //
+  // The board reorders *during* the drag rather than at drop: `onDragOver`
+  // pushes a local-only preview into `useBoardData`, so a gap opens under the
+  // cursor and the card follows it across columns. `onDragEnd` then persists
+  // wherever the preview left it, which means the request always matches what
+  // the user was looking at.
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    const data = event.active.data.current;
-    if (data?.type === 'task') {
-      setActiveTask(data.task as BoardTask);
-      snapshotRef.current = board;
-    }
-  }, [board]);
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const data = event.active.data.current;
+      if (data?.type === 'task') {
+        setActiveTask(data.task as BoardTask);
+        beginDrag();
+      } else if (data?.type === 'column') {
+        setActiveColumn(data.column as BoardColumn);
+        beginDrag();
+      }
+    },
+    [beginDrag],
+  );
 
-  const handleDragEnd = useCallback(
-    async (event: DragEndEvent) => {
+  /**
+   * Resolve whatever dnd-kit reports as `over` into "which column, and above
+   * which task".
+   *
+   * Three different droppables overlap in this board: each task, each column's
+   * empty-space dropzone, and — since columns became draggable — the column
+   * shell itself. Collision detection can legitimately return any of them, so
+   * every case has to map back to a column. Missing the `column` case is what
+   * made cross-column previews silently do nothing: the pointer was over a
+   * column shell, no branch matched, and no preview fired.
+   */
+  const resolveDropTarget = useCallback(
+    (overData: Record<string, unknown> | undefined, overId: string) => {
+      if (!overData) return null;
+      switch (overData.type) {
+        case 'task': {
+          const overTask = overData.task as BoardTask;
+          return { columnId: overTask.columnId, overTaskId: overTask.id };
+        }
+        case 'column-dropzone':
+          return { columnId: overData.columnId as string, overTaskId: null };
+        case 'column':
+          return { columnId: overId, overTaskId: null };
+        default:
+          return null;
+      }
+    },
+    [],
+  );
+
+  /**
+   * Which half of the hovered card is the pointer past?
+   *
+   * Without this a card can only ever insert *above* what it hovers, so
+   * dragging downwards feels like it lags one slot behind the cursor.
+   */
+  const withPlacement = useCallback(
+    (
+      target: { columnId: string; overTaskId: string | null },
+      active: DragOverEvent['active'],
+      over: NonNullable<DragOverEvent['over']>,
+    ) => {
+      if (!target.overTaskId) return target;
+      const activeRect = active.rect.current.translated;
+      const placement =
+        activeRect && activeRect.top > over.rect.top + over.rect.height / 2 ? 'after' : 'before';
+      return { ...target, placement } as const;
+    },
+    [],
+  );
+
+  const handleDragOver = useCallback(
+    (event: DragOverEvent) => {
       const { active, over } = event;
-      setActiveTask(null);
-      const snapshot = snapshotRef.current;
-      snapshotRef.current = null;
-      if (!over || !snapshot) return;
+      if (!over || active.id === over.id) return;
 
       const activeData = active.data.current;
-      if (activeData?.type !== 'task') return;
-      const task = activeData.task as BoardTask;
+      if (!activeData) return;
 
-      const overData = over.data.current;
-      if (!overData) return;
+      const target = resolveDropTarget(over.data.current, over.id as string);
+      if (!target) return;
 
-      // Resolve the target column + index.
-      let targetColumnId: string;
-      let newIndex: number;
-
-      if (overData.type === 'column') {
-        // Dropped onto an empty column or below the last task.
-        targetColumnId = overData.columnId as string;
-        const targetCol = snapshot.columns.find((c) => c.id === targetColumnId);
-        newIndex = targetCol ? targetCol.tasks.length : 0;
-        // If the task was already last in this column, no-op.
-        if (
-          task.columnId === targetColumnId &&
-          targetCol &&
-          newIndex - 1 === targetCol.tasks.findIndex((t) => t.id === task.id)
-        ) {
-          return;
-        }
-      } else if (overData.type === 'task') {
-        const overTask = overData.task as BoardTask;
-        targetColumnId = overTask.columnId;
-        const targetCol = snapshot.columns.find((c) => c.id === targetColumnId);
-        if (!targetCol) return;
-        const overIndex = targetCol.tasks.findIndex((t) => t.id === overTask.id);
-        if (overIndex < 0) return;
-        newIndex = overIndex;
-
-        // If we're moving within the same column and ending up at our own
-        // slot, it's a no-op.
-        if (task.columnId === targetColumnId) {
-          const fromIndex = targetCol.tasks.findIndex((t) => t.id === task.id);
-          if (fromIndex === newIndex || fromIndex + 1 === newIndex) {
-            return;
-          }
-          // Adjust: dragging forward in the same column means the index
-          // we want is the slot we're hovering (the task we're above).
-          // dnd-kit already gives us "over" as the task we hovered; that's
-          // the index to insert at. The server inserts BEFORE the over task
-          // when newIndex === overIndex.
-          if (fromIndex < newIndex) newIndex = newIndex; // already correct
-        }
-      } else {
+      // ── dragging a column ──
+      if (activeData.type === 'column') {
+        // Hovering a task or dropzone inside another column still means
+        // "put me where that column is".
+        if (target.columnId === active.id) return;
+        previewColumnMove(active.id as string, target.columnId);
         return;
       }
 
+      if (activeData.type !== 'task') return;
+
+      // ── dragging a task ──
+      previewTaskMove(active.id as string, withPlacement(target, active, over));
+    },
+    [previewColumnMove, previewTaskMove, resolveDropTarget, withPlacement],
+  );
+
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const activeData = event.active.data.current;
+      const wasColumn = activeData?.type === 'column';
+      const taskId = event.active.id as string;
+
+      setActiveTask(null);
+      setActiveColumn(null);
+
       try {
-        await handleMoveTask(task.id, { targetColumnId, newIndex });
+        if (wasColumn) {
+          await commitColumnDrag();
+        } else {
+          // Resolve the release point the same way a hover does, so a
+          // within-column reorder — which is never previewed — lands exactly
+          // where the sortable strategy has been showing the gap.
+          const over = event.over;
+          const target = over ? resolveDropTarget(over.data.current, over.id as string) : null;
+          await commitTaskDrag(
+            taskId,
+            target && over ? withPlacement(target, event.active, over) : null,
+          );
+        }
       } catch (e) {
-        const msg = e instanceof ApiClientError ? e.message : 'Could not move task';
-        toast.error(msg);
-        await refresh();
+        // The hook already restored the pre-drag snapshot; a refetch here would
+        // just make the card jump a second time.
+        const fallback = wasColumn ? 'Could not reorder columns' : 'Could not move task';
+        toast.error(e instanceof ApiClientError ? e.message : fallback);
       }
     },
-    [handleMoveTask, refresh],
+    [commitColumnDrag, commitTaskDrag, resolveDropTarget, withPlacement],
   );
 
   const handleDragCancel = useCallback(() => {
     setActiveTask(null);
-    snapshotRef.current = null;
-  }, []);
+    setActiveColumn(null);
+    cancelDrag();
+  }, [cancelDrag]);
 
   // ── task dialog handlers ──────────────────────────────────────────
 
@@ -176,6 +248,9 @@ export function KanbanBoard({ boardId }: KanbanBoardProps) {
         title: values.title,
         description: values.description ?? undefined,
         assigneeId: values.assigneeId,
+        priority: values.priority,
+        dueDate: values.dueDate,
+        labelIds: values.labelIds,
       });
     },
     [handleUpdateTask],
@@ -265,28 +340,38 @@ export function KanbanBoard({ boardId }: KanbanBoardProps) {
         sensors={sensors}
         collisionDetection={closestCorners}
         onDragStart={handleDragStart}
+        onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
-        <div className="flex gap-3 overflow-x-auto pb-4 snap-x snap-mandatory lg:flex-nowrap">
-          {columns.map((col) => (
-            <KanbanColumn
-              key={col.id}
-              column={col}
-              canEdit={canEdit}
-              isLastColumn={columns.length === 1}
-              onAddTask={openDialogFor}
-              onOpenTask={handleOpenTask}
-              onCreateTaskInline={handleInlineCreateTask}
-              onRenameColumn={handleRenameColumn}
-              onDeleteColumn={onColumnMenuDelete}
-            />
-          ))}
+        <div className="flex flex-1 items-start gap-3 overflow-x-auto pb-4">
+          <SortableContext items={columnIds} strategy={horizontalListSortingStrategy}>
+            {columns.map((col) => (
+              <KanbanColumn
+                key={col.id}
+                column={col}
+                canEdit={canEdit}
+                isLastColumn={columns.length === 1}
+                onAddTask={openDialogFor}
+                onOpenTask={handleOpenTask}
+                onCreateTaskInline={handleInlineCreateTask}
+                onRenameColumn={handleRenameColumn}
+                onDeleteColumn={onColumnMenuDelete}
+              />
+            ))}
+          </SortableContext>
           {canEdit && <AddColumnForm onCreate={handleCreateColumnSubmit} />}
         </div>
 
+        {/*
+          `dropAnimation={null}` on purpose. With the live preview the card is
+          already sitting in its final slot by the time the pointer is released,
+          so animating the overlay back would render the same card twice and
+          read as a double move.
+        */}
         <DragOverlay dropAnimation={null}>
           {activeTask ? <TaskCardOverlay task={activeTask} /> : null}
+          {activeColumn ? <KanbanColumnOverlay column={activeColumn} /> : null}
         </DragOverlay>
       </DndContext>
 
@@ -297,6 +382,9 @@ export function KanbanBoard({ boardId }: KanbanBoardProps) {
           columnId={createForColumn.columnId}
           columnTitle={createForColumn.columnTitle}
           members={members}
+          boardId={board.id}
+          boardLabels={boardLabels}
+          onLabelCreated={addLabel}
           onCreate={handleCreateTaskSubmit}
         />
       )}
@@ -306,6 +394,9 @@ export function KanbanBoard({ boardId }: KanbanBoardProps) {
         onOpenChange={handleCloseTask}
         task={openTask}
         members={members}
+        boardId={board.id}
+        boardLabels={boardLabels}
+        onLabelCreated={addLabel}
         canEdit={canEdit}
         onSave={handleSaveTask}
         onDelete={handleDeleteTaskFromDialog}

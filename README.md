@@ -7,16 +7,18 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 ## Features
 
 - **Boards, columns, tasks** — full CRUD with role-based permissions (OWNER / EDITOR / VIEWER)
-- **Drag-and-drop** — column moves and cross-column reordering powered by `@dnd-kit` + fractional position indexing
+- **Drag-and-drop** — cards *and columns*, with a live preview: the board reorders under the cursor mid-drag, not on drop. Escape restores the pre-drag state
+- **Conflict-free ordering** — base62 fractional-index keys with a unique `(column, position)` constraint and bounded retry. Eight concurrent moves to the same slot leave eight distinct positions and a strict total order; there is no renumbering pass and no precision ceiling. See [`fractional-index.ts`](backend/src/common/ordering/fractional-index.ts)
+- **Task depth** — per-board labels, due dates with overdue styling, priority, and human-readable keys (`PR-14`) from an atomically-incremented per-board counter
 - **Sharing** — invite teammates by email, assign per-board roles
 - **Auth** — JWT-based register/login with bcrypt-hashed passwords
 - **Dark mode** — every page, every component, with next-themes
-- **Optimistic mutations** — instant UI feedback, server reconciliation on the backend
+- **Optimistic mutations** — the UI updates in the same frame as the interaction, then reconciles against the server's canonical ordering key; failures roll back
 - **Accessibility** — keyboard-navigable drag-drop, focus rings, ARIA labels
 
 ## Tech Stack
 
-**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (108 e2e)
+**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 132 e2e)
 
 **Frontend** — Next.js 14 (App Router) · TypeScript · shadcn/ui · Tailwind CSS · react-hook-form + zod · `@dnd-kit` · Sonner · lucide-react
 
@@ -34,27 +36,69 @@ cp .env.docker.example .env
 # Edit .env — set JWT_SECRET to a random string (32+ bytes)
 #   openssl rand -base64 32
 
-docker compose up --build
+npm run up
 ```
 
-That's it. After ~2 minutes:
+That's it. After ~2 minutes the script prints the URLs it chose, for example:
 
-- Frontend → http://localhost:3000
-- Backend API → http://localhost:3001/api
-- Postgres → localhost:5432 (user `kanban`, password `kanban`)
+```
+  frontend: 3000 -> 3002  (default is busy)
+  postgres: 5432 -> 5434  (default is busy)
 
-Open the frontend, register an account, create a board, add a column, drag a task around. State persists across `docker compose down` / `up` (the `postgres_data` volume is preserved).
+  frontend   http://localhost:3002
+  API        http://localhost:3001/api
+  postgres   localhost:5434
+  mode       production (compiled images)
+```
+
+Open the frontend, register an account, create a board, add a column, drag a task
+around. State persists across `npm run down` / `npm run up` (the `postgres_data`
+volume is preserved).
+
+### Why `npm run up` instead of `docker compose up`
+
+Compose can't fall back when a host port is taken — it just fails to bind. That
+bites often on a dev machine, where 3000 and 5432 are usually spoken for. And
+`NEXT_PUBLIC_API_URL` is inlined into the frontend bundle at *build* time, so the
+frontend has to know the backend's port before its image is built; Compose can't
+compute that itself (it doesn't resolve a nested `${...}` inside a default, and
+falls back to the literal — leaving the frontend calling a backend that isn't
+there).
+
+`scripts/up.mjs` probes each port, picks the next free one, and derives
+`CORS_ORIGIN` and `NEXT_PUBLIC_API_URL` to match before handing off to Compose.
+It probes by *connecting*, not by binding: on Windows a second process can bind a
+port another one already holds, so a bind test reports "free" for a port that is
+in practice shadowed.
+
+```bash
+npm run up                  # pick free ports, build, start detached
+npm run up -- --dry-run     # show the ports it would use, start nothing
+npm run up -- --attach      # stream logs instead of detaching
+npm run up -- --no-build    # skip the image rebuild
+npm run up -- --dev         # hot-reload stack (see below)
+FRONTEND_PORT=4000 npm run up   # pin a port; it still gets verified
+```
+
+To pin ports permanently, uncomment `FRONTEND_PORT` / `BACKEND_PORT` /
+`POSTGRES_PORT` in `.env`.
+
+Plain `docker compose up --build` still works if all three default ports are free
+— but note it auto-merges `docker-compose.override.yml` and therefore runs the
+**development** stack. `npm run up` passes `-f docker-compose.yml` explicitly so
+you get the production images the multi-stage Dockerfiles build.
 
 ### Tear down
 
 ```bash
-docker compose down            # stop containers (data preserved)
+npm run down                   # stop containers (data preserved)
 docker compose down -v         # stop + delete data
 ```
 
 ### Hot-reload dev mode
 
-`docker-compose.override.yml` is auto-merged when you run `docker compose up`. It bind-mounts source code and runs `nest start --watch` / `next dev` so saves reload instantly:
+`docker-compose.override.yml` bind-mounts source code and runs
+`nest start --watch` / `next dev` so saves reload instantly:
 
 ```bash
 docker compose up              # full stack, hot reload

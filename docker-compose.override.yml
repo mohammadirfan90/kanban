@@ -31,6 +31,10 @@ services:
   frontend:
     # Override the prod entrypoint by running next dev against the
     # bind-mounted source.
+    build:
+      # Build only up to the `builder` stage so `npx next dev` works
+      # (the `runner` stage is a slim image without `next` in PATH).
+      target: builder
     command: sh -c "npx next dev -p 3000 -H 0.0.0.0"
     volumes:
       - ./frontend/src:/app/src

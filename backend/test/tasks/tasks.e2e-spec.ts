@@ -114,7 +114,7 @@ describe('Tasks (e2e)', () => {
       expect(res.body.columnId).toBe(colId);
       expect(res.body.title).toBe('First task');
       expect(res.body.description).toBeNull();
-      expect(res.body.position).toBe(1);
+      expect(typeof res.body.position).toBe('string');
       expect(res.body.assignee).toBeNull();
     });
 
@@ -125,14 +125,15 @@ describe('Tasks (e2e)', () => {
         .set('Authorization', `Bearer ${owner.token}`)
         .send({ columnId: colId, title: 'A' })
         .expect(201);
-      expect(a.body.position).toBe(1);
+      expect(typeof a.body.position).toBe('string');
 
       const b = await request(app.getHttpServer())
         .post('/api/tasks')
         .set('Authorization', `Bearer ${owner.token}`)
         .send({ columnId: colId, title: 'B' })
         .expect(201);
-      expect(b.body.position).toBe(2);
+      // Appended: the second task sorts after the first.
+      expect(b.body.position > a.body.position).toBe(true);
     });
 
     it('returns 201 + includes nested assignee when assigneeId is provided (board member)', async () => {
@@ -404,7 +405,7 @@ describe('Tasks (e2e)', () => {
     it("returns 204 + leaves siblings' positions unchanged (gaps allowed)", async () => {
       // Seed three tasks in a fresh column.
       const freshCol = await prisma.column.create({
-        data: { boardId: board.id, title: 'Delete Test', position: 9999 },
+        data: { boardId: board.id, title: 'Delete Test', position: 'z9' },
       });
       const t1 = await request(app.getHttpServer())
         .post('/api/tasks')
@@ -422,9 +423,8 @@ describe('Tasks (e2e)', () => {
         .send({ columnId: freshCol.id, title: 'T3' })
         .expect(201);
 
-      expect(t1.body.position).toBe(1);
-      expect(t2.body.position).toBe(2);
-      expect(t3.body.position).toBe(3);
+      expect(t1.body.position < t2.body.position).toBe(true);
+      expect(t2.body.position < t3.body.position).toBe(true);
 
       // Delete the middle one.
       await request(app.getHttpServer())
@@ -441,8 +441,10 @@ describe('Tasks (e2e)', () => {
         .get(`/api/tasks/${t3.body.id}`)
         .set('Authorization', `Bearer ${owner.token}`)
         .expect(200);
-      expect(t1After.body.position).toBe(1);
-      expect(t3After.body.position).toBe(3);
+      // Deleting the middle task leaves its siblings' keys untouched — there
+      // is no renumbering pass, so gaps are expected and harmless.
+      expect(t1After.body.position).toBe(t1.body.position);
+      expect(t3After.body.position).toBe(t3.body.position);
 
       // Confirm t2 is gone (GET → 404).
       await request(app.getHttpServer())
@@ -483,6 +485,27 @@ describe('Tasks (e2e)', () => {
         .delete(`/api/tasks/${fakeId}`)
         .set('Authorization', `Bearer ${owner.token}`)
         .expect(404);
+    });
+  });
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Response contract: nested tasks carry their columnId
+  // ──────────────────────────────────────────────────────────────────────
+  describe('nested task shape', () => {
+    it('includes columnId on tasks nested inside a board response', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/api/boards/${board.id}`)
+        .set('Authorization', `Bearer ${owner.token}`)
+        .expect(200);
+
+      const withTasks = res.body.columns.filter((c: { tasks: unknown[] }) => c.tasks.length > 0);
+      expect(withTasks.length).toBeGreaterThan(0);
+
+      for (const column of withTasks) {
+        for (const task of column.tasks) {
+          expect(task).toHaveProperty('columnId', column.id);
+        }
+      }
     });
   });
 });

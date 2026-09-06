@@ -81,6 +81,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const payload = isJson ? await res.json() : await res.text();
 
   if (!res.ok) {
+    if (res.status === 401) {
+      tokenStore.clear();
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
+    }
     if (isJson && payload && typeof payload === 'object') {
       throw new ApiClientError(payload as ApiError);
     }

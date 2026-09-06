@@ -91,7 +91,18 @@ describe('Boards (e2e)', () => {
         'In Progress',
         'Done',
       ]);
-      expect(res.body.columns[0].position).toBeLessThan(res.body.columns[1].position);
+      // Ordering keys are strings; compare lexicographically, which is exactly
+      // how the database sorts them.
+      expect(res.body.columns[0].position < res.body.columns[1].position).toBe(true);
+      // Every nested task must carry its columnId. The client resolves drag
+      // targets from the dragged card's own payload, so omitting it silently
+      // breaks drag-and-drop while every type still says `columnId: string`.
+      for (const column of res.body.columns) {
+        for (const task of column.tasks) {
+          expect(task.columnId).toBe(column.id);
+        }
+      }
+      expect(res.body.columns[1].position < res.body.columns[2].position).toBe(true);
       expect(res.body.members).toHaveLength(1);
       expect(res.body.members[0]).toEqual({
         userId: owner.userId,

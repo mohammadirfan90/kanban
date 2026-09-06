@@ -18,7 +18,7 @@ import { BoardHeader } from '@/components/boards/board-header';
 import { KanbanBoard } from '@/components/boards/kanban-board';
 import { ShareBoardDialog } from '@/components/boards/share-board-dialog';
 import { useAuth } from '@/contexts/AuthContext';
-import { useBoard } from '@/hooks/use-board';
+import { useBoardData } from '@/hooks/use-board-data';
 import { ApiClientError } from '@/lib/api';
 import { revokeBoardShare } from '@/lib/boards';
 import type { BoardMemberView } from '@/lib/types';
@@ -29,7 +29,8 @@ export default function BoardDetailPage() {
   const { user, loading: authLoading, logout } = useAuth();
   const boardId = typeof params.id === 'string' ? params.id : '';
 
-  const { board, loading: boardLoading, error, refresh } = useBoard(boardId);
+  const boardData = useBoardData(boardId);
+  const { board, loading: boardLoading, error, refresh } = boardData;
 
   const [shareOpen, setShareOpen] = useState(false);
   const [removing, setRemoving] = useState<BoardMemberView | null>(null);
@@ -88,7 +89,7 @@ export default function BoardDetailPage() {
           onSignOut={() => void logout()}
         />
       ) : (
-        <header className="border-b bg-background/80 backdrop-blur-sm">
+        <header className="border-b bg-background/80 backdrop-blur-xs">
           <div className="container flex h-16 items-center px-4 sm:px-6 lg:px-8">
             <p className="text-sm text-muted-foreground">
               {boardLoading ? 'Loading board…' : error?.message ?? '…'}
@@ -99,7 +100,7 @@ export default function BoardDetailPage() {
 
       <main className="flex-1 px-4 pb-12 pt-6 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-[1600px]">
-          <KanbanBoard boardId={boardId} />
+          <KanbanBoard data={boardData} />
         </div>
       </main>
 
