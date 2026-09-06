@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -9,7 +9,9 @@ import {
   closestCorners,
   useSensor,
   useSensors,
+  type Announcements,
   type DragEndEvent,
+  type KeyboardCoordinateGetter,
   type DragOverEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
@@ -62,6 +64,58 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
     cancelDrag,
   } = data ?? internalData;
 
+  /**
+   * `sortableKeyboardCoordinates` is built for a *single* sortable list. On a
+   * multi-column board it needs two Arrow presses to cross a column boundary
+   * and picks the target geometrically, which on a wide board lands somewhere
+   * unrelated. Left/Right are therefore resolved against the column model
+   * instead: one press, one column. Up/Down stay on the stock getter, which
+   * handles within-list reordering correctly.
+   *
+   * Reads the board through a ref, not the render closure: KeyboardSensor
+   * captures its options once when the drag starts, so a captured `board`
+   * stays frozen at the drag-start snapshot and every Arrow press after the
+   * first would compute its target from a column the card has already left.
+   */
+  const boardRef = useRef(board);
+  useEffect(() => {
+    boardRef.current = board;
+  }, [board]);
+
+  const coordinateGetter = useCallback<KeyboardCoordinateGetter>(
+    (event, args) => {
+      const horizontal = event.code === 'ArrowLeft' || event.code === 'ArrowRight';
+      const { active, collisionRect, droppableRects, droppableContainers } = args.context;
+
+      if (!horizontal || !active || !collisionRect || active.data.current?.type !== 'task') {
+        return sortableKeyboardCoordinates(event, args);
+      }
+
+      event.preventDefault();
+
+      // Read the column from the *live* board rather than the drag-start
+      // snapshot: the preview has already moved the card on earlier presses.
+      const cols = boardRef.current?.columns ?? [];
+      const from = cols.findIndex((c) => c.tasks.some((t) => t.id === active.id));
+      if (from === -1) return undefined;
+
+      const target = cols[event.code === 'ArrowRight' ? from + 1 : from - 1];
+      if (!target) return undefined;
+
+      const dropzone = droppableContainers.get(`column-dropzone-${target.id}`);
+      const rect = dropzone ? droppableRects.get(dropzone.id) : undefined;
+      if (!rect) return undefined;
+
+      // Keep the card's vertical position, clamped inside the target column so
+      // it cannot be pushed out of view on a short column.
+      return {
+        x: rect.left,
+        y: Math.max(rect.top, Math.min(collisionRect.top, rect.top + rect.height - collisionRect.height)),
+      };
+    },
+    [],
+  );
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       // 8px activation threshold — a simple click on a card reaches the
@@ -69,7 +123,10 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
       activationConstraint: { distance: 8 },
     }),
     useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
+      coordinateGetter,
+      // Space alone drives dragging. dnd-kit's default binds *both* Space and
+      // Enter, which collides with Enter-to-open on a focused card.
+      keyboardCodes: { start: ['Space'], cancel: ['Escape'], end: ['Space'] },
     }),
   );
 
@@ -91,6 +148,54 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
   const members: BoardMemberView[] = useMemo(() => board?.members ?? [], [board]);
   const columnIds = useMemo(() => columns.map((c) => c.id), [columns]);
   const boardLabels = useMemo(() => board?.labels ?? [], [board]);
+
+  /**
+   * dnd-kit's default announcements read raw ids to screen readers ("Draggable
+   * item 7986e647-… was moved over droppable area 4d984c8d-…"), which is noise.
+   * These name the task and the column instead, and report the landing slot.
+   */
+  const announcements = useMemo<Announcements>(() => {
+    const describe = (data: Record<string, unknown> | null | undefined): string => {
+      if (data?.type === 'task') {
+        const task = data.task as BoardTask;
+        return `task ${task.key ? `${task.key}, ` : ''}${task.title}`;
+      }
+      if (data?.type === 'column') {
+        return `column ${(data.column as BoardColumn).title}`;
+      }
+      if (data?.type === 'column-dropzone') {
+        const column = columns.find((c) => c.id === data.columnId);
+        return column ? `column ${column.title}` : 'a column';
+      }
+      return 'an item';
+    };
+
+    // Read *after* the live preview has already moved things, so this reports
+    // where the item actually landed rather than where it started.
+    const slotOf = (taskId: string): string | null => {
+      for (const column of columns) {
+        const index = column.tasks.findIndex((t) => t.id === taskId);
+        if (index !== -1) {
+          return `position ${index + 1} of ${column.tasks.length} in ${column.title}`;
+        }
+      }
+      return null;
+    };
+
+    return {
+      onDragStart: ({ active }) => `Picked up ${describe(active.data.current)}.`,
+      onDragOver: ({ active, over }) =>
+        over ? `${describe(active.data.current)} is over ${describe(over.data.current)}.` : undefined,
+      onDragEnd: ({ active, over }) => {
+        const what = describe(active.data.current);
+        if (!over) return `Dropped ${what}. It returned to its original position.`;
+        const slot = slotOf(String(active.id));
+        return slot ? `Dropped ${what} at ${slot}.` : `Dropped ${what} on ${describe(over.data.current)}.`;
+      },
+      onDragCancel: ({ active }) =>
+        `Cancelled. ${describe(active.data.current)} returned to its original position.`,
+    };
+  }, [columns]);
 
   // ── DnD handlers ──────────────────────────────────────────────────
   //
@@ -155,8 +260,29 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
       target: { columnId: string; overTaskId: string | null },
       active: DragOverEvent['active'],
       over: NonNullable<DragOverEvent['over']>,
+      activatorEvent?: Event | null,
     ) => {
       if (!target.overTaskId) return target;
+
+      /*
+        A keyboard drag parks the card exactly on the target's rect, so the
+        midpoint test below can never report "after": every ArrowDown resolved
+        to "insert before the card I am moving towards", which is where it
+        already is. Nothing moved. Direction of travel is unambiguous for a
+        keyboard drag, so read it off the indices instead. ArrowUp happened to
+        work by accident, which is why this only ever failed downwards.
+      */
+      if (activatorEvent?.type?.startsWith('key')) {
+        const column = (boardRef.current?.columns ?? []).find((c) =>
+          c.tasks.some((t) => t.id === target.overTaskId),
+        );
+        const from = column?.tasks.findIndex((t) => t.id === active.id) ?? -1;
+        const to = column?.tasks.findIndex((t) => t.id === target.overTaskId) ?? -1;
+        if (from !== -1 && to !== -1) {
+          return { ...target, placement: to > from ? 'after' : 'before' } as const;
+        }
+      }
+
       const activeRect = active.rect.current.translated;
       const placement =
         activeRect && activeRect.top > over.rect.top + over.rect.height / 2 ? 'after' : 'before';
@@ -188,7 +314,7 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
       if (activeData.type !== 'task') return;
 
       // ── dragging a task ──
-      previewTaskMove(active.id as string, withPlacement(target, active, over));
+      previewTaskMove(active.id as string, withPlacement(target, active, over, event.activatorEvent));
     },
     [previewColumnMove, previewTaskMove, resolveDropTarget, withPlacement],
   );
@@ -213,7 +339,7 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
           const target = over ? resolveDropTarget(over.data.current, over.id as string) : null;
           await commitTaskDrag(
             taskId,
-            target && over ? withPlacement(target, event.active, over) : null,
+            target && over ? withPlacement(target, event.active, over, event.activatorEvent) : null,
           );
         }
       } catch (e) {
@@ -338,6 +464,7 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
     <div className="flex flex-1 flex-col">
       <DndContext
         sensors={sensors}
+        accessibility={{ announcements }}
         collisionDetection={closestCorners}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}

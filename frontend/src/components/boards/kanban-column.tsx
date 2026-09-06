@@ -72,14 +72,16 @@ export function KanbanColumn({
         dragHandleProps={listeners}
       />
 
-      <TaskList columnId={column.id} tasks={column.tasks} disabled={!canEdit} onOpenTask={onOpenTask} />
+      <TaskList
+        columnId={column.id}
+        tasks={column.tasks}
+        disabled={!canEdit}
+        canEdit={canEdit}
+        onOpenTask={onOpenTask}
+      />
 
       {canEdit && onCreateTaskInline && (
         <InlineAddTask columnId={column.id} onCreate={onCreateTaskInline} onOpenDialog={() => onAddTask(column.id)} />
-      )}
-
-      {!canEdit && column.tasks.length === 0 && (
-        <EmptyColumn canAddTask={false} onAddTask={() => undefined} />
       )}
     </div>
   );
@@ -272,11 +274,13 @@ function TaskList({
   columnId,
   tasks,
   disabled,
+  canEdit,
   onOpenTask,
 }: {
   columnId: string;
   tasks: BoardTask[];
   disabled: boolean;
+  canEdit: boolean;
   onOpenTask: (task: BoardTask) => void;
 }) {
   // `column-dropzone`, not `column`: the column shell itself is now a sortable
@@ -292,13 +296,23 @@ function TaskList({
       <div
         ref={setNodeRef}
         className={cn(
-          'flex min-h-10 flex-1 flex-col gap-2 overflow-y-auto rounded-md transition-colors',
+          'flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto rounded-md transition-colors',
           isOver && 'bg-accent/40 ring-2 ring-primary/30',
         )}
       >
-        {tasks.map((t) => (
-          <TaskCard key={t.id} task={t} disabled={disabled} onClick={onOpenTask} />
-        ))}
+        {/*
+          The empty state lives inside the droppable so an empty column stays a
+          full-height drop target. It is rendered for editors too — it used to be
+          viewer-only, which left the people who can actually drag aiming at a
+          40px strip.
+        */}
+        {tasks.length === 0 ? (
+          <EmptyColumn canDrop={canEdit} />
+        ) : (
+          tasks.map((t) => (
+            <TaskCard key={t.id} task={t} disabled={disabled} onClick={onOpenTask} />
+          ))
+        )}
       </div>
     </SortableContext>
   );

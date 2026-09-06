@@ -101,6 +101,22 @@ export function TaskCard({ task, disabled, onClick }: TaskCardProps) {
     transition,
   };
 
+  /*
+    dnd-kit's KeyboardSensor listens on `onKeyDown`, so spreading `{...listeners}`
+    and then declaring our own `onKeyDown` underneath it silently replaced the
+    sensor's handler — keyboard dragging never actually worked on a card. Chain
+    the two instead, and keep the gestures separate: Space drags (see
+    `keyboardCodes` in kanban-board.tsx), Enter opens the task.
+  */
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    (listeners?.onKeyDown as ((e: React.KeyboardEvent) => void) | undefined)?.(event);
+    if (event.defaultPrevented) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      onClick?.(task);
+    }
+  };
+
   return (
     <Card
       ref={setNodeRef}
@@ -109,16 +125,12 @@ export function TaskCard({ task, disabled, onClick }: TaskCardProps) {
       className={cn(
         'group/task flex flex-col gap-2 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-xs transition-shadow hover:shadow-sm',
         isDragging && 'opacity-40',
-        disabled && 'cursor-default',
+        disabled ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
       )}
       {...attributes}
       {...listeners}
       onClick={() => onClick?.(task)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          onClick?.(task);
-        }
-      }}
+      onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
       aria-label={`Open task ${task.key ? `${task.key} ` : ''}${task.title}`}

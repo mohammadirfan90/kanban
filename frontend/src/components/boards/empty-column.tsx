@@ -1,29 +1,29 @@
 'use client';
 
 import { Inbox } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export interface EmptyColumnProps {
-  /** When false, hides the "+ Add task" CTA (VIEWER role). */
-  canAddTask: boolean;
-  onAddTask: () => void;
+  /**
+   * Editors get a dashed drop target; viewers get a plain empty state.
+   *
+   * There is deliberately no "Add task" button here any more — the column
+   * already renders `InlineAddTask` directly below, and two add affordances a
+   * few pixels apart read as a mistake.
+   */
+  canDrop: boolean;
 }
 
-export function EmptyColumn({ canAddTask, onAddTask }: EmptyColumnProps) {
+export function EmptyColumn({ canDrop }: EmptyColumnProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
-      <Inbox className="h-10 w-10 text-muted-foreground/40" />
-      <p className="text-xs text-muted-foreground">No tasks</p>
-      {canAddTask && (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onAddTask}
-          className="mt-1 text-xs"
-        >
-          + Add task
-        </Button>
+    <div
+      className={cn(
+        'flex flex-1 flex-col items-center justify-center gap-2 rounded-md py-8 text-center',
+        canDrop && 'border border-dashed border-border',
       )}
+    >
+      <Inbox className="h-8 w-8 text-muted-foreground/40" aria-hidden />
+      <p className="text-xs text-muted-foreground">{canDrop ? 'Drop tasks here' : 'No tasks'}</p>
     </div>
   );
 }
