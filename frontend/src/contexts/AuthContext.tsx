@@ -26,22 +26,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  // On mount, try to rehydrate user from /auth/me if a token exists.
+  // On mount, ask the backend who we are. The JWT is in an httpOnly
+  // cookie so JS can't see it — we just fire /auth/me and trust the
+  // browser to attach the cookie. If it 401s, the api client redirects.
   useEffect(() => {
-    const token = typeof window !== 'undefined' ? window.localStorage.getItem('kanban_token') : null;
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
     const cached = authStore.getUser();
     if (cached) setUser(cached);
 
     fetchCurrentUser()
       .then((u) => setUser(u))
       .catch(() => {
-        // Token invalid — clear and let user re-login.
+        // No valid session — show login.
         authStore.clear();
         setUser(null);
       })

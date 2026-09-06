@@ -5,6 +5,7 @@ import { AppModule } from '../../src/app.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
+import { rawAuthCookie, tokenFromResponse } from '../auth-cookie';
 
 describe('Auth (e2e)', () => {
   let app: INestApplication;
@@ -46,7 +47,11 @@ describe('Auth (e2e)', () => {
         .send({ email: testEmail, password: testPassword, name: testName })
         .expect(201);
 
-      expect(res.body.access_token).toEqual(expect.any(String));
+      expect(tokenFromResponse(res)).toEqual(expect.any(String));
+      // The point of moving the JWT into a cookie: it must be unreadable
+      // from JS, so it carries HttpOnly and must not appear in the body.
+      expect(rawAuthCookie(res)).toMatch(/HttpOnly/i);
+      expect(res.body.access_token).toBeUndefined();
       expect(res.body.user).toEqual({
         id: expect.any(String),
         email: testEmail,
@@ -95,7 +100,11 @@ describe('Auth (e2e)', () => {
         .send({ email: testEmail, password: testPassword })
         .expect(200);
 
-      expect(res.body.access_token).toEqual(expect.any(String));
+      expect(tokenFromResponse(res)).toEqual(expect.any(String));
+      // The point of moving the JWT into a cookie: it must be unreadable
+      // from JS, so it carries HttpOnly and must not appear in the body.
+      expect(rawAuthCookie(res)).toMatch(/HttpOnly/i);
+      expect(res.body.access_token).toBeUndefined();
       expect(res.body.user.email).toBe(testEmail);
     });
 
@@ -125,7 +134,7 @@ describe('Auth (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/api/auth/login')
         .send({ email: testEmail, password: testPassword });
-      token = res.body.access_token;
+      token = tokenFromResponse(res);
     });
 
     it('returns 401 without token', async () => {

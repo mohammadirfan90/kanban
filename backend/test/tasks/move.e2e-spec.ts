@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { HttpExceptionFilter } from '../../src/common/filters/http-exception.filter';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { tokenFromResponse } from '../auth-cookie';
 
 interface UserFixture {
   email: string;
@@ -118,7 +119,7 @@ describe('Tasks (e2e) — PATCH /api/tasks/:id/move', () => {
         .post('/api/auth/register')
         .send({ email: f.email, password: f.password, name: f.name })
         .expect(201);
-      f.token = res.body.access_token;
+      f.token = tokenFromResponse(res);
       f.userId = res.body.user.id;
     }
 

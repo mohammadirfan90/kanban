@@ -1,9 +1,12 @@
-// API client — wraps native fetch with JWT injection and typed errors.
+// API client — wraps native fetch with cookie-based auth and typed errors.
+//
+// The JWT lives in an httpOnly cookie set by the backend on /auth/login
+// and /auth/register. The browser sends it automatically as long as we
+// pass `credentials: 'include'`. There is intentionally no JS access to
+// the token — that's the whole point of this layer's redesign.
 
 import type { ApiError } from './types';
 
-const TOKEN_KEY = 'kanban_token';
-const USER_KEY = 'kanban_user';
 function getApiUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
   const trimmed = raw.trim().replace(/\/+$/, '');
@@ -12,19 +15,20 @@ function getApiUrl(): string {
 
 const API_URL = getApiUrl();
 
+// Kept as a no-op shim so existing call sites that imported tokenStore
+// keep compiling. All methods are no-ops: the cookie store is the
+// browser's, and we never touch it from JS.
 export const tokenStore = {
   get(): string | null {
-    if (typeof window === 'undefined') return null;
-    return window.localStorage.getItem(TOKEN_KEY);
+    return null;
   },
   set(token: string): void {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem(TOKEN_KEY, token);
+    // Intentionally a no-op — see file header. Parameter kept for
+    // signature compatibility with the prior localStorage-backed API.
+    void token;
   },
   clear(): void {
-    if (typeof window === 'undefined') return;
-    window.localStorage.removeItem(TOKEN_KEY);
-    window.localStorage.removeItem(USER_KEY);
+    // Server /auth/logout clears the cookie. The SPA doesn't need to.
   },
 };
 
@@ -55,14 +59,10 @@ interface RequestOptions {
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, headers = {}, signal } = options;
 
-  const token = tokenStore.get();
   const finalHeaders: Record<string, string> = {
     Accept: 'application/json',
     ...headers,
   };
-  if (token) {
-    finalHeaders['Authorization'] = `Bearer ${token}`;
-  }
   if (body !== undefined) {
     finalHeaders['Content-Type'] = 'application/json';
   }
@@ -88,8 +88,22 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   if (!res.ok) {
     if (res.status === 401) {
-      tokenStore.clear();
-      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      /*
+        The backend cleared the cookie, or the request lacked one. Bounce to
+        /login — but never from a page that is itself an unauthenticated
+        destination.
+
+        `/register` has to be in this list. AuthProvider probes /auth/me on
+        every mount now that the JWT lives in an httpOnly cookie and JS can no
+        longer check for a token first. On the sign-up page that probe always
+        401s, so redirecting on it sent every visitor straight from the
+        registration form to the login form — sign-up was unreachable.
+      */
+      const UNAUTHENTICATED_PATHS = ['/login', '/register'];
+      const onPublicPage =
+        typeof window !== 'undefined' &&
+        UNAUTHENTICATED_PATHS.some((p) => window.location.pathname.startsWith(p));
+      if (typeof window !== 'undefined' && !onPublicPage) {
         window.location.href = '/login';
       }
     }
