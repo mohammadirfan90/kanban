@@ -55,9 +55,12 @@ COPY --from=builder /app/package.json ./package.json
 # required in your Prisma config file". Omitting it broke the production
 # image while the auto-merged dev override kept masking it.
 COPY --from=builder /app/prisma.config.ts ./prisma.config.ts
+COPY docker-entrypoint.sh ./
+RUN sed -i 's/\r$//' ./docker-entrypoint.sh && chmod +x ./docker-entrypoint.sh
 
 USER nestjs
 
 EXPOSE 3001
 
-CMD ["node", "dist/main.js"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
+

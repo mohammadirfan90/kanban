@@ -4,7 +4,13 @@ import type { ApiError } from './types';
 
 const TOKEN_KEY = 'kanban_token';
 const USER_KEY = 'kanban_user';
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+function getApiUrl(): string {
+  const raw = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  return trimmed.endsWith('/api') ? trimmed : `${trimmed}/api`;
+}
+
+const API_URL = getApiUrl();
 
 export const tokenStore = {
   get(): string | null {
