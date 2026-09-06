@@ -1,7 +1,20 @@
-# Development override — auto-merged by `docker compose` when present.
-# Lets contributors run the full stack with hot-reload:
-#   docker compose up
-# (override is picked up automatically; no -f needed).
+# Development stack — hot-reload, NOT auto-merged.
+#
+# This file used to be named `docker-compose.override.yml`, which Compose
+# merges automatically into ANY bare `docker compose` command. That is exactly
+# what caused a real outage during development: a plain `docker compose up -d
+# backend` (no -f flag) silently merged this file's dev command
+# (`nest start --watch`) onto the already-built PRODUCTION image (the `runner`
+# stage, which has no source and no tsconfig.json) without rebuilding it. The
+# container crashed on boot with "Could not find TypeScript configuration file
+# tsconfig.json", and — with no restart policy — simply stayed dead.
+#
+# Renaming the file removes the silent-merge behavior entirely. Dev mode now
+# requires an explicit second -f, which `npm run up -- --dev` passes for you:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# A bare `docker compose up` (or `restart`, `logs`, etc.) now always resolves
+# to production, full stop — there is no accidental way back into this file.
 #
 # Differences from docker-compose.yml:
 #   - Source code is bind-mounted so saves reload instantly.

@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  KanbanSquare,
   LogOut,
   Plus,
   Inbox,
@@ -35,6 +34,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ModeToggle } from '@/components/mode-toggle';
+import { Logo } from '@/components/logo';
 import { BoardForm } from '@/components/boards/board-form';
 import { RoleBadge } from '@/components/boards/role-badge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -120,10 +120,7 @@ export default function BoardsPage() {
     <div className="min-h-screen bg-background">
       <header className="border-b">
         <div className="container flex h-16 items-center justify-between">
-          <Link href="/boards" className="flex items-center gap-2 font-semibold tracking-tight">
-            <KanbanSquare className="h-5 w-5" />
-            <span>Kanban</span>
-          </Link>
+          <Logo href="/boards" />
           <div className="flex items-center gap-3">
             <span className="hidden text-sm text-muted-foreground sm:inline">
               {user.name ?? user.email}

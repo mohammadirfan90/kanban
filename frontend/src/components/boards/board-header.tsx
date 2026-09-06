@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { ArrowLeft, KanbanSquare, LogOut, UserPlus } from 'lucide-react';
+import { ArrowLeft, LogOut, UserPlus } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModeToggle } from '@/components/mode-toggle';
+import { Logo } from '@/components/logo';
 import { RoleBadge } from './role-badge';
 import type { Board, BoardMemberView, BoardRole } from '@/lib/types';
 
@@ -42,10 +43,7 @@ export function BoardHeader({ board, onShareClick, onSignOut }: BoardHeaderProps
           >
             <ArrowLeft className="h-4 w-4" />
           </Link>
-          <Link href="/boards" className="hidden items-center gap-2 font-semibold tracking-tight sm:flex">
-            <KanbanSquare className="h-5 w-5" />
-            <span>Kanban</span>
-          </Link>
+          <Logo href="/boards" className="hidden sm:flex" />
           <span className="hidden text-muted-foreground sm:inline">/</span>
           <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">
             {board.title}

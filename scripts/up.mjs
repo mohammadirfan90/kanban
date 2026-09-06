@@ -15,7 +15,7 @@
  *   npm run up -- --attach     # stream logs instead of detaching
  *   npm run up -- --no-build   # skip the image rebuild
  *   npm run up -- --dry-run    # show the chosen ports without starting
- *   npm run up -- --dev        # hot-reload stack (merges docker-compose.override.yml)
+ *   npm run up -- --dev        # hot-reload stack (docker-compose.dev.yml, explicit -f)
  *   FRONTEND_PORT=4000 npm run up   # pin a port; the script still verifies it
  *
  * Ports already set in the environment (or in .env) are honoured — the script
@@ -93,12 +93,17 @@ const argv = process.argv.slice(2);
 const attach = argv.includes('--attach');
 const noBuild = argv.includes('--no-build');
 const dryRun = argv.includes('--dry-run');
-// docker-compose.override.yml is auto-merged by `docker compose` whenever it
-// exists, which silently turns the documented production command into a
-// hot-reload dev stack (`next dev`, `nest start --watch`, bind mounts). Naming
-// the file explicitly opts out of that; --dev opts back in.
+// docker-compose.dev.yml (formerly docker-compose.override.yml) is never
+// auto-merged — a real outage was caused by exactly that behavior: a bare
+// `docker compose up -d backend` silently applied the dev command to the
+// already-built PRODUCTION image without rebuilding it, and the container
+// crashed on boot with no restart policy to recover it. Both modes now name
+// their files explicitly, so a bare `docker compose <anything>` (restart,
+// logs, up) can never land on the wrong one by accident.
 const dev = argv.includes('--dev');
-const composeFiles = dev ? [] : ['-f', 'docker-compose.yml'];
+const composeFiles = dev
+  ? ['-f', 'docker-compose.yml', '-f', 'docker-compose.dev.yml']
+  : ['-f', 'docker-compose.yml'];
 
 /**
  * Host ports this project's own containers already publish.

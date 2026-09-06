@@ -3,16 +3,29 @@
 #
 # Usage:
 #   cp .env.docker.example .env          # configure secrets
-#   docker compose up --build            # start the full stack
+#   docker compose up --build            # start the full stack (production)
 #   docker compose down                  # stop (keeps data)
 #   docker compose down -v               # stop + delete data
 #
-# For hot-reload during development, see docker-compose.override.yml —
-# it's auto-merged by `docker compose` when present.
+# For hot-reload during development, see docker-compose.dev.yml. It is a
+# regular compose file, NOT an auto-merged override (it used to be named
+# docker-compose.override.yml, which Compose merges into every bare command).
+# That auto-merge caused a real outage: a plain `docker compose up -d backend`
+# silently applied the dev file's `nest start --watch` command onto the
+# already-built PRODUCTION image without rebuilding it — the image has no
+# source and no tsconfig.json, so the container crashed on boot and, with no
+# restart policy at the time, stayed dead. Dev mode now requires explicitly
+# naming both files (`npm run up -- --dev` does this for you):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# `restart: unless-stopped` below exists for the same reason: a bare
+# `docker compose up` should never again leave a crashed service silently
+# down with no signal.
 
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: kanban
       POSTGRES_PASSWORD: kanban
@@ -34,6 +47,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://kanban:kanban@postgres:5432/kanban
       JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
@@ -62,6 +76,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001/api}
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001/api}
       NODE_ENV: production

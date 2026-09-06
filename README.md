@@ -83,10 +83,10 @@ FRONTEND_PORT=4000 npm run up   # pin a port; it still gets verified
 To pin ports permanently, uncomment `FRONTEND_PORT` / `BACKEND_PORT` /
 `POSTGRES_PORT` in `.env`.
 
-Plain `docker compose up --build` still works if all three default ports are free
-— but note it auto-merges `docker-compose.override.yml` and therefore runs the
-**development** stack. `npm run up` passes `-f docker-compose.yml` explicitly so
-you get the production images the multi-stage Dockerfiles build.
+A bare `docker compose up --build` now always resolves to **production** too —
+there's a second compose file for hot-reload (below), but it is never
+auto-merged, so a plain `docker compose <anything>` can't land on it by
+accident.
 
 ### Tear down
 
@@ -97,13 +97,26 @@ docker compose down -v         # stop + delete data
 
 ### Hot-reload dev mode
 
-`docker-compose.override.yml` bind-mounts source code and runs
-`nest start --watch` / `next dev` so saves reload instantly:
+`docker-compose.dev.yml` bind-mounts source code and runs `nest start --watch`
+/ `next dev` so saves reload instantly. It is a plain compose file, not an
+auto-merged override — you have to name it explicitly:
 
 ```bash
-docker compose up              # full stack, hot reload
+npm run up -- --dev            # full stack, hot reload (passes both -f flags for you)
+# or directly:
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 # Backend rebuilds on .ts changes; frontend hot-reloads on .tsx changes.
 ```
+
+This file used to be named `docker-compose.override.yml`, which Compose
+auto-merges into *every* bare `docker compose` command whether you want it or
+not. That auto-merge caused a real outage during development: a plain
+`docker compose up -d backend` (no `-f`) silently applied this file's dev
+command onto the already-built production image *without rebuilding it* — the
+production image has no source and no `tsconfig.json`, so the container
+crashed on boot and, with no restart policy at the time, stayed dead. The file
+was renamed and the compose services now carry `restart: unless-stopped` so
+neither failure mode can happen silently again.
 
 ## Quick Start — Local without Docker
 
@@ -282,8 +295,9 @@ npm run typecheck
 │   └── iteration-log.md   # Build log
 ├── DESIGN.md              # UI design contract
 ├── AGENTS.md              # Agent behavior rules
-├── docker-compose.yml     # Prod stack
-├── docker-compose.override.yml  # Dev (hot reload)
+├── docker-compose.yml     # Prod stack (this is what a bare `docker compose up` runs)
+├── docker-compose.dev.yml # Dev stack, hot reload — must be named explicitly, never auto-merged
+├── scripts/up.mjs         # Picks free ports, derives CORS/API URL, then runs one of the above
 └── README.md
 ```
 

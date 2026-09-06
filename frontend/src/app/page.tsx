@@ -1,8 +1,9 @@
 import Link from 'next/link';
-import { KanbanSquare, ArrowRight, MoonStar, Users, Zap } from 'lucide-react';
+import { ArrowRight, MoonStar, Users, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ModeToggle } from '@/components/mode-toggle';
+import { Logo } from '@/components/logo';
 
 export default function HomePage() {
   return (
@@ -10,10 +11,7 @@ export default function HomePage() {
       {/* Header */}
       <header className="border-b">
         <div className="container flex h-16 items-center justify-between">
-          <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-            <KanbanSquare className="h-5 w-5" />
-            <span>Kanban</span>
-          </Link>
+          <Logo href="/" />
           <nav className="flex items-center gap-2">
             <ModeToggle />
             <Button variant="ghost" asChild>

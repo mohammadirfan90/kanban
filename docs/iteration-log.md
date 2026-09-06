@@ -1975,5 +1975,127 @@ time. Verified: three consecutive `npm run up` runs now land on the same ports.
 
 ### Next
 
-- Phase 4: realtime (WebSocket gateway, board rooms, presence, reconciliation
-  against the optimistic queue).
+- Realtime (WebSocket gateway, board rooms, presence) is deprioritized for now
+  in favor of the power-user layer: `cmdk` command palette, keyboard
+  shortcuts, undo/redo, multi-select drag, filters, WIP limits.
+
+---
+
+## [2026-09-06 21:50] — Iteration 16: Fixed a real production outage (dev/prod compose mismatch)
+
+### Context
+
+The real account owner reported "You do not have access to this board" when
+sharing a board they own — the OWNER badge was visibly rendered on the same
+page. Investigating this live (not from memory) found the actual cause was
+worse than a UI bug: the backend container was **dead**.
+
+`docker compose ps` showed only `frontend` and `postgres` running; `docker ps -a`
+showed `webbrikstest-backend-1` as `Exited (0)`. Its logs:
+
+```
+Error: Could not find TypeScript configuration file "tsconfig.json"
+```
+
+`docker inspect` on the dead container showed why:
+
+```
+Cmd: [sh -c npx prisma migrate deploy && npx nest start --watch]
+```
+
+That's the **dev** command (`docker-compose.override.yml`), running against the
+already-built **production** image (the Dockerfile's `runner` stage — `dist/` +
+`node_modules` only, no source, no `tsconfig.json`). Compose auto-merges
+`docker-compose.override.yml` into *any* bare `docker compose` invocation; at
+some point during this project's development, a plain `docker compose up -d
+backend` (missing `-f docker-compose.yml`) recreated the container with the
+override's command applied to the unchanged prod image, and it crashed on its
+first boot. With no restart policy configured, it simply stayed dead — silently,
+indefinitely, with no signal anywhere that it had happened.
+
+### Was the authorization code actually buggy?
+
+No — verified directly. Rebuilt the backend correctly
+(`docker compose -f docker-compose.yml up -d --build backend`), then minted a
+JWT for the real owner's `userId` (same `JWT_SECRET` the container uses) and
+hit the live API with curl:
+
+```
+GET  /api/boards/<their board>        → 200, role: OWNER
+     (columns matched the screenshot exactly: To Do, In Progress, Review, Done, abcd)
+POST /api/boards/<their board>/share  → 404 "Target user not found"
+     (correct — the test used a placeholder userId)
+```
+
+`assertAccess` behaves correctly for this exact user and board when the backend
+is actually running. The 403 the user saw was the backend being in the dead
+state above at that moment, not a flaw in the access-control logic.
+
+### What was built
+
+The underlying footgun — not just this one crash — needed closing, since the
+project's own docs already *warned* about override auto-merge and it still
+happened:
+
+- **`docker-compose.override.yml` → `docker-compose.dev.yml`.** Compose only
+  auto-merges a file with the literal name `docker-compose.override.yml`.
+  Renaming it removes the silent-merge behavior entirely: a bare
+  `docker compose up`, `restart`, `logs`, or `up -d <service>` now *always*
+  resolves to production, full stop. Dev mode requires naming both files
+  explicitly (`-f docker-compose.yml -f docker-compose.dev.yml`), which
+  `npm run up -- --dev` does automatically.
+- **`restart: unless-stopped`** added to all three services in
+  `docker-compose.yml`. Belt-and-suspenders: even if some *other* transient
+  fault ever crashes a container, it recovers on its own instead of staying
+  dead with zero visibility.
+- `scripts/up.mjs`'s `composeFiles` now passes both `-f` flags for `--dev`
+  rather than relying on the (now nonexistent) auto-merge.
+- README's dev-mode section, project-structure listing, and the top-of-file
+  comments in both compose files rewritten to match — each explains *why* the
+  old name was dangerous, not just what changed, so the mistake doesn't get
+  quietly reintroduced by a future edit.
+- `docs/iteration-log.md`'s "Next" pointer retargeted away from realtime (per
+  explicit instruction to deprioritize it) toward the power-user layer.
+
+### Considered but rejected
+
+- **Leaving the override auto-merge and just documenting the danger more
+  loudly.** Already tried — the README and AGENTS.md both called this out
+  before this iteration, and it still happened. A footgun that's merely
+  documented is still a footgun; removing the mechanism is the only fix that
+  actually prevents a recurrence.
+- **A Docker healthcheck-triggered auto-heal instead of `restart:`.** Compose's
+  built-in restart policy is simpler, is the standard idiom, and doesn't
+  require writing custom recovery logic.
+
+### Verification
+
+- **Regression-tested the exact failure mode.** Ran the precise command that
+  caused the original outage — `docker compose up -d backend` (no `-f`, no
+  override present anymore) — and confirmed via `docker inspect` it now
+  resolves to the production `Cmd` (`node dist/main.js`) with
+  `RestartPolicy: unless-stopped`, not the dev command.
+- Backend reached `healthy` within seconds; `GET /api/health` responded `200`.
+- Backend: `tsc --noEmit` ✅, lint ✅, unit **29/29** ✅, e2e **132/132** ✅
+  (re-run against the rebuilt container, fresh log, exit code 0).
+- Frontend: `tsc --noEmit` ✅, lint ✅ 0 warnings.
+- Swept the repo for stale references to the old filename: README and both
+  compose files updated; `docs/iteration-log.md` and `specs/11-docker.md` left
+  untouched deliberately (see below).
+
+### Known caveats
+
+- **`specs/11-docker.md`** (the original Spec 11 planning document) still
+  names `docker-compose.override.yml`. Left as-is on the same principle
+  applied to `iteration-log.md` elsewhere in this project: specs are dated,
+  point-in-time planning artifacts, not living documentation, and this
+  iteration log entry is the durable record of why the name changed.
+- **`backend/.env`'s `JWT_SECRET` does not match the root `.env`'s.** Noticed
+  while investigating (harmless in practice — `backend/.env` only matters for
+  a local non-Docker `npm run start:dev`, and is gitignored, so it's not part
+  of the submission). Left alone rather than rewriting a local, untracked file
+  on the user's machine without being asked.
+- No confirmation of what specific earlier command caused the original
+  override-merge — Compose doesn't log which files it merged, and by the time
+  this was investigated the dead container was the only evidence left. The fix
+  addresses the whole class of mistake rather than the one specific command.
