@@ -44,7 +44,7 @@ export function AddColumnForm({ onCreate }: AddColumnFormProps) {
   if (!open) {
     return (
       <div
-        className={`flex ${COLUMN_WIDTH} shrink-0 flex-col gap-1`}
+        className={`flex ${COLUMN_WIDTH} shrink-0 self-start flex-col gap-1`}
         data-testid="add-column-tile"
       >
         <Button
@@ -62,7 +62,7 @@ export function AddColumnForm({ onCreate }: AddColumnFormProps) {
 
   return (
     <div
-      className={`flex ${COLUMN_WIDTH} shrink-0 flex-col gap-2 rounded-lg bg-muted/30 p-3`}
+      className={`flex ${COLUMN_WIDTH} shrink-0 self-start flex-col gap-2 rounded-lg bg-muted/30 p-3`}
     >
       <Input
         ref={inputRef}

@@ -335,7 +335,7 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-1 flex-col">
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -344,7 +344,16 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
-        <div className="flex flex-1 items-start gap-3 overflow-x-auto pb-4">
+        {/*
+          Default cross-axis alignment (stretch), not `items-start`: that was
+          quietly capping every column to its own content height, so the pale
+          column background stopped a few cards down and the rest of the
+          viewport below it just sat empty. Stretching lets each column's
+          drop zone reach the bottom of the board the way Trello's lists do —
+          you can drop a card into the empty space under the last one instead
+          of hunting for exactly where the list ends.
+        */}
+        <div className="flex flex-1 gap-3 overflow-x-auto pb-4">
           <SortableContext items={columnIds} strategy={horizontalListSortingStrategy}>
             {columns.map((col) => (
               <KanbanColumn

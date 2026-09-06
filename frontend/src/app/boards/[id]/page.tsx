@@ -98,8 +98,15 @@ export default function BoardDetailPage() {
         </header>
       )}
 
-      <main className="flex-1 px-4 pb-12 pt-6 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-[1600px]">
+      <main className="flex flex-1 flex-col px-4 pb-12 pt-6 sm:px-6 lg:px-8">
+        {/*
+          flex + flex-1 the whole way down, not `h-full`: percentage heights
+          are fragile through several ancestors, and this is what actually
+          lets the board's drop zone stretch to fill the viewport instead of
+          collapsing to its (short) content height and leaving the rest of the
+          page dead blank space below the columns.
+        */}
+        <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col">
           <KanbanBoard data={boardData} />
         </div>
       </main>
