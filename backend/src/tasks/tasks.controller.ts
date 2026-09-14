@@ -12,6 +12,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { ActorSocket } from '../realtime/actor-socket.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import type { JwtPayload } from '../auth/strategies/jwt.strategy';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -26,8 +27,12 @@ export class TasksController {
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  create(@CurrentUser() user: JwtPayload, @Body() dto: CreateTaskDto): Promise<TaskResponse> {
-    return this.tasks.create(user.sub, dto);
+  create(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: CreateTaskDto,
+    @ActorSocket() socketId: string | null,
+  ): Promise<TaskResponse> {
+    return this.tasks.create(user.sub, dto, socketId);
   }
 
   @Get(':id')
@@ -43,8 +48,9 @@ export class TasksController {
     @CurrentUser() user: JwtPayload,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: UpdateTaskDto,
+    @ActorSocket() socketId: string | null,
   ): Promise<TaskResponse> {
-    return this.tasks.update(user.sub, id, dto);
+    return this.tasks.update(user.sub, id, dto, socketId);
   }
 
   @Patch(':id/move')
@@ -52,8 +58,9 @@ export class TasksController {
     @CurrentUser() user: JwtPayload,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
     @Body() dto: MoveTaskDto,
+    @ActorSocket() socketId: string | null,
   ): Promise<TaskResponse> {
-    return this.tasks.move(user.sub, id, dto);
+    return this.tasks.move(user.sub, id, dto, socketId);
   }
 
   @Delete(':id')
@@ -61,7 +68,8 @@ export class TasksController {
   remove(
     @CurrentUser() user: JwtPayload,
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @ActorSocket() socketId: string | null,
   ): Promise<void> {
-    return this.tasks.remove(user.sub, id);
+    return this.tasks.remove(user.sub, id, socketId);
   }
 }

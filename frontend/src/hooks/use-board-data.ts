@@ -20,6 +20,8 @@ import {
   type TaskResponse,
   type UpdateTaskInput,
 } from '@/lib/tasks';
+import { useBoardRealtime, type BoardRealtime } from './use-board-realtime';
+import type { PresenceUser } from '@/lib/realtime';
 import type { Board, BoardColumn, BoardLabel, BoardTask } from '@/lib/types';
 
 export type BoardLoadErrorKind = 'not-found' | 'forbidden' | 'unknown';
@@ -53,6 +55,12 @@ export interface UseBoardDataResult {
   error: BoardLoadError | null;
   /** True when the caller can mutate (EDITOR or OWNER). VIEWER = read-only. */
   canEdit: boolean;
+  /** Everyone currently viewing this board, with whatever card they are dragging. */
+  presence: PresenceUser[];
+  /** False when the socket is down — the board still works, just without live updates. */
+  realtimeConnected: boolean;
+  /** Tell other viewers which card this tab is dragging. */
+  broadcastDrag: (taskId: string | null) => void;
   refresh: () => Promise<void>;
   // Tasks
   handleCreateTask: (columnId: string, input: CreateTaskInput) => Promise<void>;
@@ -319,6 +327,7 @@ export function useBoardData(id: string): UseBoardDataResult {
    * continue normally.
    */
   const previewHistoryRef = useRef<string[]>([]);
+  const realtimeRef = useRef<BoardRealtime | null>(null);
 
   const shouldSkipPreview = useCallback((signature: string): boolean => {
     const history = previewHistoryRef.current;
@@ -341,9 +350,19 @@ export function useBoardData(id: string): UseBoardDataResult {
     setBoard(updated);
   }, []);
 
+  /*
+    True from drag start until the drop settles.
+
+    Realtime updates are deferred while it is set: dnd-kit measures node
+    rectangles when a drag begins, so re-parenting a card underneath an active
+    drag makes the drop land somewhere the user never aimed.
+  */
+  const isDraggingRef = useRef(false);
+
   const beginDrag = useCallback(() => {
     dragSnapshotRef.current = boardRef.current;
     previewHistoryRef.current = [];
+    isDraggingRef.current = true;
   }, []);
 
   /** Move a task to `target` in local state. Unconditional; used by the drop. */
@@ -421,6 +440,8 @@ export function useBoardData(id: string): UseBoardDataResult {
     restoreDragSnapshot();
     dragSnapshotRef.current = null;
     previewHistoryRef.current = [];
+    isDraggingRef.current = false;
+    realtimeRef.current?.broadcastDrag(null);
   }, [restoreDragSnapshot]);
 
   /**
@@ -676,11 +697,30 @@ export function useBoardData(id: string): UseBoardDataResult {
     [canEdit, mutate],
   );
 
+  /*
+    Live updates, presence and the drag indicator.
+
+    Wired here rather than in the page because this hook owns board state:
+    a socket event is just one more caller of applyLocal, the same seam the
+    optimistic mutations already use.
+  */
+  const realtime = useBoardRealtime({
+    boardId: id,
+    applyLocal,
+    refresh: fetchBoard,
+    isDraggingRef,
+    onAccessRevoked: () => setError({ kind: 'forbidden', message: 'Your access was removed' }),
+  });
+  realtimeRef.current = realtime;
+
   return {
     board,
     loading,
     error,
     canEdit,
+    presence: realtime.presence,
+    realtimeConnected: realtime.connected,
+    broadcastDrag: realtime.broadcastDrag,
     refresh: fetchBoard,
     handleCreateTask,
     handleUpdateTask,

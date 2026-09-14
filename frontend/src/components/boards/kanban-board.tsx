@@ -62,7 +62,21 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
     commitTaskDrag,
     commitColumnDrag,
     cancelDrag,
+    presence,
+    broadcastDrag,
   } = data ?? internalData;
+
+  /*
+    Cards other people are holding right now.
+
+    Keyed by task id so a column can outline one card without knowing anything
+    about presence. Recomputed from the presence list rather than stored, since
+    presence is already the single source of truth for who is doing what.
+  */
+  const remoteDraggingTaskIds = useMemo(
+    () => new Set(presence.map((p) => p.draggingTaskId).filter((id): id is string => id !== null)),
+    [presence],
+  );
 
   /**
    * `sortableKeyboardCoordinates` is built for a *single* sortable list. On a
@@ -211,12 +225,14 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
       if (data?.type === 'task') {
         setActiveTask(data.task as BoardTask);
         beginDrag();
+        // Let other viewers outline the card while it is in the air.
+        broadcastDrag((data.task as BoardTask).id);
       } else if (data?.type === 'column') {
         setActiveColumn(data.column as BoardColumn);
         beginDrag();
       }
     },
-    [beginDrag],
+    [beginDrag, broadcastDrag],
   );
 
   /**
@@ -327,6 +343,7 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
 
       setActiveTask(null);
       setActiveColumn(null);
+      broadcastDrag(null);
 
       try {
         if (wasColumn) {
@@ -349,14 +366,15 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
         toast.error(e instanceof ApiClientError ? e.message : fallback);
       }
     },
-    [commitColumnDrag, commitTaskDrag, resolveDropTarget, withPlacement],
+    [commitColumnDrag, commitTaskDrag, resolveDropTarget, withPlacement, broadcastDrag],
   );
 
   const handleDragCancel = useCallback(() => {
     setActiveTask(null);
     setActiveColumn(null);
+    broadcastDrag(null);
     cancelDrag();
-  }, [cancelDrag]);
+  }, [cancelDrag, broadcastDrag]);
 
   // ── task dialog handlers ──────────────────────────────────────────
 
@@ -484,6 +502,7 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
           <SortableContext items={columnIds} strategy={horizontalListSortingStrategy}>
             {columns.map((col) => (
               <KanbanColumn
+                remoteDraggingTaskIds={remoteDraggingTaskIds}
                 key={col.id}
                 column={col}
                 canEdit={canEdit}

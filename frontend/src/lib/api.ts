@@ -6,6 +6,7 @@
 // the token — that's the whole point of this layer's redesign.
 
 import type { ApiError } from './types';
+import { currentSocketId } from './realtime';
 
 function getApiUrl(): string {
   const raw = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
@@ -106,6 +107,21 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   };
   if (body !== undefined) {
     finalHeaders['Content-Type'] = 'application/json';
+  }
+
+  /*
+    Tell the server which socket is making this change, so the broadcast it
+    triggers can be stamped and we can ignore our own echo. We already applied
+    the change optimistically; re-applying it would fight our local state, most
+    visibly mid-drag where it would yank the card out from under the cursor.
+
+    Set here rather than at each call site so no mutation can forget it. Absent
+    when the socket has not connected, which is exactly the case where there is
+    no echo to suppress.
+  */
+  const socketId = currentSocketId();
+  if (socketId) {
+    finalHeaders['X-Socket-Id'] = socketId;
   }
 
   const url = path.startsWith('http') ? path : `${API_URL}${path}`;

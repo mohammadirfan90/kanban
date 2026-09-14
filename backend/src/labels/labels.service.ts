@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { BoardsService } from '../boards/boards.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
@@ -47,6 +48,7 @@ export class LabelsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly boards: BoardsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   private toResponse(label: {
@@ -88,6 +90,7 @@ export class LabelsService {
       const label = await this.prisma.label.create({
         data: { boardId, name, color: dto.color },
       });
+      this.realtime.boardInvalidated(boardId, null);
       this.logger.log(`Label ${label.id} (${name}) created on board ${boardId} by ${userId}`);
       return this.toResponse(label);
     } catch (e) {
@@ -145,6 +148,7 @@ export class LabelsService {
     await this.boards.assertAccess(userId, existing.boardId, 'EDITOR');
 
     await this.prisma.label.delete({ where: { id: labelId } });
+    this.realtime.boardInvalidated(existing.boardId, null);
     this.logger.log(`Label ${labelId} deleted from board ${existing.boardId} by ${userId}`);
   }
 

@@ -11,6 +11,7 @@ import { deriveBoardKey } from '../common/board-key';
 import { keysBetween, type OrderKey } from '../common/ordering/fractional-index';
 import { TASK_INCLUDE, toTaskView, type TaskView } from '../common/task-view';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { CreateBoardDto } from './dto/create-board.dto';
 import { UpdateBoardDto } from './dto/update-board.dto';
 import { ShareBoardDto } from './dto/share-board.dto';
@@ -68,7 +69,10 @@ export type BoardTaskView = TaskView;
 export class BoardsService {
   private readonly logger = new Logger(BoardsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly realtime: RealtimeService,
+  ) {}
 
   /** Returns the caller's role on a board (or null if no access). */
   async getRole(userId: string, boardId: string): Promise<BoardRole | null> {
@@ -194,6 +198,7 @@ export class BoardsService {
       include: this.defaultInclude(),
     });
 
+    this.realtime.boardInvalidated(boardId, null);
     const role = (await this.getRole(userId, boardId)) ?? 'VIEWER';
     return this.toBoardResponse(updated, role);
   }
@@ -255,6 +260,17 @@ export class BoardsService {
     }
 
     await this.prisma.boardMember.delete({ where: { id: existing.id } });
+
+    /*
+      Close their live connection too.
+
+      Room membership is checked once, when a socket joins. Without this the
+      removed member's open tab keeps receiving every board event until they
+      happen to reload — a real authorisation hole, not a cosmetic one, and the
+      kind that only exists once a socket layer is added.
+    */
+    this.realtime.accessRevoked(boardId, targetUserId);
+    this.realtime.boardInvalidated(boardId, null);
     this.logger.log(`Board ${boardId}: revoked access for ${targetUserId}`);
   }
 

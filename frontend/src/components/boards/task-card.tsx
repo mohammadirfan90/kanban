@@ -14,6 +14,14 @@ export interface TaskCardProps {
   task: BoardTask;
   /** Disables drag (VIEWER mode). */
   disabled?: boolean;
+  /**
+   * Another viewer is dragging this card right now.
+   *
+   * Shown, not blocked: two people can move the same card and ordering stays
+   * conflict-free because positions are fractional-index keys with a unique
+   * constraint behind them. The outline is a courtesy, not a lock.
+   */
+  remoteDragging?: boolean;
   onClick?: (task: BoardTask) => void;
 }
 
@@ -82,7 +90,7 @@ function TaskCardBody({ task }: { task: BoardTask }) {
  * The card itself stays in place during drag — the `DragOverlay` renders the
  * rotated copy visually.
  */
-export function TaskCard({ task, disabled, onClick }: TaskCardProps) {
+export function TaskCard({ task, disabled, remoteDragging, onClick }: TaskCardProps) {
   const {
     attributes,
     listeners,
@@ -125,6 +133,7 @@ export function TaskCard({ task, disabled, onClick }: TaskCardProps) {
       className={cn(
         'group/task flex flex-col gap-2 rounded-lg border border-border bg-card p-3 text-card-foreground shadow-xs transition-shadow hover:shadow-sm',
         isDragging && 'opacity-40',
+        remoteDragging && 'ring-2 ring-primary/50 shadow-sm',
         disabled ? 'cursor-default' : 'cursor-grab active:cursor-grabbing',
       )}
       {...attributes}

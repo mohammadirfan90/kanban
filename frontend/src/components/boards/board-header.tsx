@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Logo } from '@/components/logo';
+import { PresenceBar } from './presence-bar';
+import type { PresenceUser } from '@/lib/realtime';
 import { RoleBadge } from './role-badge';
 import type { Board, BoardMemberView, BoardRole } from '@/lib/types';
 
@@ -24,9 +26,20 @@ export interface BoardHeaderProps {
   board: Board;
   onShareClick: () => void;
   onSignOut: () => void;
+  /** Live viewers, from the realtime hook. Empty when the socket is down. */
+  presence?: PresenceUser[];
+  realtimeConnected?: boolean;
+  currentUserId?: string;
 }
 
-export function BoardHeader({ board, onShareClick, onSignOut }: BoardHeaderProps) {
+export function BoardHeader({
+  board,
+  onShareClick,
+  onSignOut,
+  presence = [],
+  realtimeConnected = false,
+  currentUserId,
+}: BoardHeaderProps) {
   const isOwner = board.role === 'OWNER';
   const visible = board.members.slice(0, MAX_AVATARS);
   const overflow = board.members.length - visible.length;
@@ -52,6 +65,12 @@ export function BoardHeader({ board, onShareClick, onSignOut }: BoardHeaderProps
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Who is here NOW, distinct from who has access. */}
+          <PresenceBar
+            users={presence}
+            connected={realtimeConnected}
+            currentUserId={currentUserId}
+          />
           <MemberAvatarGroup members={visible} overflow={overflow} />
           {isOwner && (
             <Button variant="outline" size="sm" onClick={onShareClick}>

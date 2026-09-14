@@ -51,7 +51,18 @@ async function bootstrap(): Promise<void> {
     },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Accept', 'Authorization'],
+    /*
+      `X-Socket-Id` must be listed here.
+
+      Sending a custom header turns an otherwise simple cross-origin request
+      into a preflighted one, and a preflight whose
+      Access-Control-Request-Headers are not all allow-listed fails — so the
+      browser never sends the real request at all. Omitting it did not degrade
+      realtime; it broke every board load with "Could not load board", because
+      the header is attached to every mutation and refetch once the socket
+      connects.
+    */
+    allowedHeaders: ['Content-Type', 'Accept', 'Authorization', 'X-Socket-Id'],
   });
 
   const port = Number(config.get<string>('PORT', '3001'));

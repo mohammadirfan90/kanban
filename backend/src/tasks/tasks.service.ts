@@ -6,6 +6,7 @@ import { withOrderingRetry } from '../common/ordering/ordering-retry';
 import { TASK_INCLUDE, toTaskView, type TaskView } from '../common/task-view';
 import { LabelsService } from '../labels/labels.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { MoveTaskDto } from './dto/move-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -23,6 +24,7 @@ export class TasksService {
     private readonly prisma: PrismaService,
     private readonly boards: BoardsService,
     private readonly labels: LabelsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   private defaultInclude() {
@@ -88,7 +90,11 @@ export class TasksService {
   }
 
   /** Create a task. Caller must have EDITOR+ on the parent board. */
-  async create(userId: string, dto: CreateTaskDto): Promise<TaskResponse> {
+  async create(
+    userId: string,
+    dto: CreateTaskDto,
+    actorSocketId: string | null = null,
+  ): Promise<TaskResponse> {
     // Resolve the column → boardId first so we can authorize + validate assignee.
     const column = await this.prisma.column.findUnique({
       where: { id: dto.columnId },
@@ -149,7 +155,11 @@ export class TasksService {
     );
 
     this.logger.log(`Task ${created.id} created in column ${dto.columnId} by ${userId}`);
-    return this.toTaskResponse(created);
+    const view = this.toTaskResponse(created);
+    // Broadcast after persistence, never before: every listener receives the
+    // canonical row, including the server-assigned position and key.
+    this.realtime.taskCreated(column.boardId, view, actorSocketId);
+    return view;
   }
 
   /** Get a task by id. Caller must have VIEWER+ on the parent board. */
@@ -165,7 +175,12 @@ export class TasksService {
   }
 
   /** Update a task's title/description/assignee. Caller must have EDITOR+ on the parent board. */
-  async update(userId: string, taskId: string, dto: UpdateTaskDto): Promise<TaskResponse> {
+  async update(
+    userId: string,
+    taskId: string,
+    dto: UpdateTaskDto,
+    actorSocketId: string | null = null,
+  ): Promise<TaskResponse> {
     const boardId = await this.resolveBoardIdForTask(taskId);
     await this.boards.assertAccess(userId, boardId, 'EDITOR');
 
@@ -212,16 +227,28 @@ export class TasksService {
         include: this.defaultInclude(),
       });
     });
-    return this.toTaskResponse(updated);
+    const view = this.toTaskResponse(updated);
+    this.realtime.taskUpdated(boardId, view, actorSocketId);
+    return view;
   }
 
   /** Delete a task. Caller must have EDITOR+ on the parent board. */
-  async remove(userId: string, taskId: string): Promise<void> {
+  async remove(userId: string, taskId: string, actorSocketId: string | null = null): Promise<void> {
     const boardId = await this.resolveBoardIdForTask(taskId);
     await this.boards.assertAccess(userId, boardId, 'EDITOR');
 
+    // Read the column before deleting: listeners need to know which column to
+    // drop the card from, and the row is gone by the time we broadcast.
+    const existing = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: { columnId: true },
+    });
+
     await this.prisma.task.delete({ where: { id: taskId } });
     this.logger.log(`Task ${taskId} deleted by ${userId}`);
+    if (existing) {
+      this.realtime.taskDeleted(boardId, taskId, existing.columnId, actorSocketId);
+    }
   }
 
   /**
@@ -247,9 +274,21 @@ export class TasksService {
    * Cross-board moves are rejected. Allowing them would silently carry an
    * assignee onto a board they may not be a member of.
    */
-  async move(userId: string, taskId: string, dto: MoveTaskDto): Promise<TaskResponse> {
+  async move(
+    userId: string,
+    taskId: string,
+    dto: MoveTaskDto,
+    actorSocketId: string | null = null,
+  ): Promise<TaskResponse> {
     const sourceBoardId = await this.resolveBoardIdForTask(taskId);
     await this.boards.assertAccess(userId, sourceBoardId, 'EDITOR');
+
+    // Captured before the move so listeners remove the card from the column it
+    // came from, not the one it landed in.
+    const origin = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: { columnId: true },
+    });
 
     const updated = await withOrderingRetry(
       () =>
@@ -299,6 +338,12 @@ export class TasksService {
     this.logger.log(
       `Task ${taskId} moved to column ${dto.targetColumnId} position ${updated.position} by ${userId}`,
     );
-    return this.toTaskResponse(updated);
+    const view = this.toTaskResponse(updated);
+    this.realtime.taskMoved(
+      sourceBoardId,
+      { task: view, fromColumnId: origin?.columnId ?? view.columnId },
+      actorSocketId,
+    );
+    return view;
   }
 }

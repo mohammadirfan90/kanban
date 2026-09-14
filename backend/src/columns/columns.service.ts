@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Column } from '@prisma/client';
 import { BoardsService } from '../boards/boards.service';
+import { RealtimeService } from '../realtime/realtime.service';
 import { keyBetween, keysBetween, type OrderKey } from '../common/ordering/fractional-index';
 import { withOrderingRetry } from '../common/ordering/ordering-retry';
 import { TASK_INCLUDE, toTaskView, type TaskView } from '../common/task-view';
@@ -29,6 +30,7 @@ export class ColumnsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly boards: BoardsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   /**
@@ -85,6 +87,7 @@ export class ColumnsService {
       });
     }, `create column on board ${dto.boardId}`);
 
+    this.realtime.columnsChanged(dto.boardId, null);
     this.logger.log(`Column ${created.id} created on board ${dto.boardId} by ${userId}`);
     return this.toColumnResponse(created);
   }
@@ -113,6 +116,7 @@ export class ColumnsService {
       include: this.defaultInclude(),
     });
 
+    this.realtime.columnsChanged(existing.boardId, null);
     return this.toColumnResponse(updated);
   }
 
@@ -140,6 +144,7 @@ export class ColumnsService {
     }
 
     await this.prisma.column.delete({ where: { id: columnId } });
+    this.realtime.columnsChanged(existing.boardId, null);
     this.logger.log(`Column ${columnId} deleted from board ${existing.boardId} by ${userId}`);
   }
 
@@ -216,6 +221,7 @@ export class ColumnsService {
       `reorder columns on board ${dto.boardId}`,
     );
 
+    this.realtime.columnsChanged(dto.boardId, null);
     this.logger.log(`Columns reordered on board ${dto.boardId} by ${userId}`);
     return refreshed.map((c) => this.toColumnResponse(c));
   }

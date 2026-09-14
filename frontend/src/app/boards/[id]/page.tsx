@@ -30,7 +30,14 @@ export default function BoardDetailPage() {
   const boardId = typeof params.id === 'string' ? params.id : '';
 
   const boardData = useBoardData(boardId);
-  const { board, loading: boardLoading, error, refresh } = boardData;
+  const {
+    board,
+    loading: boardLoading,
+    error,
+    refresh,
+    presence,
+    realtimeConnected,
+  } = boardData;
 
   const [shareOpen, setShareOpen] = useState(false);
   const [removing, setRemoving] = useState<BoardMemberView | null>(null);
@@ -85,7 +92,10 @@ export default function BoardDetailPage() {
       {board ? (
         <BoardHeader
           board={board}
-          onShareClick={() => setShareOpen(true)}
+          presence={presence}
+        realtimeConnected={realtimeConnected}
+        currentUserId={user?.id}
+        onShareClick={() => setShareOpen(true)}
           onSignOut={() => void logout()}
         />
       ) : (

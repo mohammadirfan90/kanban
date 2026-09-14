@@ -10,6 +10,7 @@ import { ColumnsModule } from './columns/columns.module';
 import { LabelsModule } from './labels/labels.module';
 import { TasksModule } from './tasks/tasks.module';
 import { UsersModule } from './users/users.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { UsersModule } from './users/users.module';
     ColumnsModule,
     TasksModule,
     LabelsModule,
+    RealtimeModule,
   ],
   controllers: [HealthController],
   providers: [

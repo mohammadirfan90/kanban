@@ -25,6 +25,8 @@ const COLUMN_WIDTH = 'w-80'; // 320px per DESIGN.md
 export interface KanbanColumnProps {
   column: BoardColumn;
   canEdit: boolean;
+  /** Cards another viewer is dragging right now, outlined but still interactive. */
+  remoteDraggingTaskIds?: ReadonlySet<string>;
   isLastColumn: boolean;
   onAddTask: (columnId: string) => void;
   onOpenTask: (task: BoardTask) => void;
@@ -36,6 +38,7 @@ export interface KanbanColumnProps {
 export function KanbanColumn({
   column,
   canEdit,
+  remoteDraggingTaskIds,
   isLastColumn,
   onAddTask,
   onOpenTask,
@@ -77,6 +80,7 @@ export function KanbanColumn({
         tasks={column.tasks}
         disabled={!canEdit}
         canEdit={canEdit}
+        remoteDraggingTaskIds={remoteDraggingTaskIds}
         onOpenTask={onOpenTask}
       />
 
@@ -275,12 +279,14 @@ function TaskList({
   tasks,
   disabled,
   canEdit,
+  remoteDraggingTaskIds,
   onOpenTask,
 }: {
   columnId: string;
   tasks: BoardTask[];
   disabled: boolean;
   canEdit: boolean;
+  remoteDraggingTaskIds?: ReadonlySet<string>;
   onOpenTask: (task: BoardTask) => void;
 }) {
   // `column-dropzone`, not `column`: the column shell itself is now a sortable
@@ -310,7 +316,13 @@ function TaskList({
           <EmptyColumn canDrop={canEdit} />
         ) : (
           tasks.map((t) => (
-            <TaskCard key={t.id} task={t} disabled={disabled} onClick={onOpenTask} />
+            <TaskCard
+              key={t.id}
+              task={t}
+              disabled={disabled}
+              remoteDragging={remoteDraggingTaskIds?.has(t.id) ?? false}
+              onClick={onOpenTask}
+            />
           ))
         )}
       </div>

@@ -27,15 +27,16 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 - **Sharing** — invite teammates by email, assign per-board roles
 - **Public view-only links** — an owner can publish a board at an unguessable URL that anyone can read without an account, then rotate or revoke it at any time. The public payload comes from its own projection: no members, no roles, no ids, and assignees by display name only, so publishing a board never discloses a collaborator email address
 - **Auth** — bcrypt (cost 12) passwords, a short-lived access JWT and a database-backed refresh session, both delivered as httpOnly cookies that JavaScript cannot read. Refresh tokens rotate on every use and only their SHA-256 hash is stored; replaying a rotated token is treated as theft and revokes the whole session family. Logout genuinely revokes, `logout-all` ends every device, and `GET /api/auth/sessions` lists what is signed in. The API parses `application/json` only, so a cross-site form cannot forge an authenticated request
+- **Realtime collaboration** — a Socket.IO gateway pushes canonical board changes to every viewer after persistence, with live presence avatars and an outline on whatever card someone else is dragging. The actor drops its own echo, remote updates are deferred while you are mid-drag, and removing a member closes their socket rather than waiting for a refresh. Concurrent moves converge because ordering is conflict-free by construction. If the socket never connects the board works exactly as before, just without live updates
 - **Dark mode** — every page, every component, with next-themes
 - **Optimistic mutations** — the UI updates in the same frame as the interaction, then reconciles against the server's canonical ordering key; failures roll back
 - **Accessibility** — full keyboard drag-and-drop (`Space` to lift, arrows to move within a column and across columns, `Space` to drop, `Escape` to cancel), with screen-reader announcements that name the task and its destination column rather than reading raw ids. Plus focus rings and ARIA labels throughout
 
 ## Tech Stack
 
-**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 170 e2e)
+**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · Socket.IO · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 170 e2e)
 
-**Frontend** — Next.js 14 (App Router) · TypeScript · shadcn/ui · Tailwind CSS · react-hook-form + zod · `@dnd-kit` · Sonner · lucide-react
+**Frontend** — Next.js 14 (App Router) · TypeScript · shadcn/ui · Tailwind CSS · react-hook-form + zod · `@dnd-kit` · socket.io-client · Sonner · lucide-react
 
 **Infra** — Docker · docker-compose (prod + dev override) · multi-stage Alpine images
 
