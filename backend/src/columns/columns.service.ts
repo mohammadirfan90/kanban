@@ -121,6 +121,92 @@ export class ColumnsService {
   }
 
   /**
+   * Duplicate a column and everything in it, appended after the original.
+   *
+   * Copies are new tasks, not references: each gets its own id, its own key
+   * from the board counter, and its own ordering position. Labels are
+   * re-attached by id because they belong to the board, not the task.
+   *
+   * The whole thing runs in one transaction. A half-copied list is worse than
+   * no copy at all - the user would have to work out which cards made it
+   * across before retrying.
+   */
+  async copy(userId: string, columnId: string): Promise<ColumnResponse> {
+    const source = await this.prisma.column.findUnique({
+      where: { id: columnId },
+      include: {
+        tasks: {
+          orderBy: { position: 'asc' },
+          include: { labels: { select: { labelId: true } } },
+        },
+      },
+    });
+    if (!source) {
+      throw new NotFoundException('Column not found');
+    }
+
+    await this.boards.assertAccess(userId, source.boardId, 'EDITOR');
+
+    const created = await withOrderingRetry(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const last = await tx.column.findFirst({
+            where: { boardId: source.boardId },
+            orderBy: { position: 'desc' },
+            select: { position: true },
+          });
+
+          const column = await tx.column.create({
+            data: {
+              boardId: source.boardId,
+              title: `${source.title} (copy)`,
+              position: keyBetween(last?.position ?? null, null),
+            },
+          });
+
+          // Sequential, not Promise.all: each card takes the next key from
+          // the board counter and the next ordering position after the one
+          // before it, so both depend on the previous iteration.
+          let previous: string | null = null;
+          for (const task of source.tasks) {
+            const board = await tx.board.update({
+              where: { id: source.boardId },
+              data: { taskCounter: { increment: 1 } },
+              select: { taskCounter: true },
+            });
+            previous = keyBetween(previous, null);
+            await tx.task.create({
+              data: {
+                columnId: column.id,
+                boardId: source.boardId,
+                number: board.taskCounter,
+                title: task.title,
+                description: task.description,
+                priority: task.priority,
+                dueDate: task.dueDate,
+                assigneeId: task.assigneeId,
+                position: previous,
+                labels: { create: task.labels.map((l) => ({ labelId: l.labelId })) },
+              },
+            });
+          }
+
+          return tx.column.findUniqueOrThrow({
+            where: { id: column.id },
+            include: this.defaultInclude(),
+          });
+        }),
+      `copy column ${columnId}`,
+    );
+
+    this.realtime.columnsChanged(source.boardId, null);
+    this.logger.log(
+      `Column ${columnId} copied to ${created.id} (${source.tasks.length} cards) by ${userId}`,
+    );
+    return this.toColumnResponse(created);
+  }
+
+  /**
    * Delete a column. Cascades to its tasks. Refuses if the column is the last one on its board.
    */
   async remove(userId: string, columnId: string): Promise<void> {

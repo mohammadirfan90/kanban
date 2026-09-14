@@ -48,3 +48,8 @@ export async function deleteColumn(id: string): Promise<void> {
 export async function reorderColumns(input: ReorderColumnsInput): Promise<ColumnResponse[]> {
   return request<ColumnResponse[]>('/columns/reorder', { method: 'PUT', body: input });
 }
+
+/** Duplicate a column and its cards, appended after the original. */
+export async function copyColumn(id: string): Promise<ColumnResponse> {
+  return request<ColumnResponse>(`/columns/${id}/copy`, { method: 'POST' });
+}

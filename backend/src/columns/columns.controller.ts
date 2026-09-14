@@ -39,6 +39,16 @@ export class ColumnsController {
     return this.columns.update(user.sub, id, dto);
   }
 
+  /** Duplicate a column and its cards, appended after the original. */
+  @Post(':id/copy')
+  @HttpCode(HttpStatus.CREATED)
+  copy(
+    @CurrentUser() user: JwtPayload,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ): Promise<ColumnResponse> {
+    return this.columns.copy(user.sub, id);
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   remove(

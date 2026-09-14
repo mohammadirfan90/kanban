@@ -114,6 +114,8 @@ export interface Board {
   updatedAt: string;
   /** Prefix for this board's task keys, e.g. `PR` in `PR-14`. */
   key: string;
+  /** Canvas background palette token, or null for the default surface. */
+  background: string | null;
   /** The caller's role on this board. */
   role: BoardRole;
   /** A live public view-only link exists. The slug itself is owner-only. */

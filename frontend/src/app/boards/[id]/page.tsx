@@ -14,19 +14,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { BoardHeader } from '@/components/boards/board-header';
+import { AppNavbar } from '@/components/app-navbar';
+import { BoardBar } from '@/components/boards/board-bar';
 import { KanbanBoard } from '@/components/boards/kanban-board';
 import { ShareBoardDialog } from '@/components/boards/share-board-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBoardData } from '@/hooks/use-board-data';
 import { ApiClientError } from '@/lib/api';
+import { backgroundStyle } from '@/lib/board-background';
 import { revokeBoardShare } from '@/lib/boards';
 import type { BoardMemberView } from '@/lib/types';
 
 export default function BoardDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const boardId = typeof params.id === 'string' ? params.id : '';
 
   const boardData = useBoardData(boardId);
@@ -37,9 +39,12 @@ export default function BoardDetailPage() {
     refresh,
     presence,
     realtimeConnected,
+    applyBoard,
   } = boardData;
 
   const [shareOpen, setShareOpen] = useState(false);
+  /** Board-scoped card filter, driven by the navbar search box. */
+  const [query, setQuery] = useState('');
   const [removing, setRemoving] = useState<BoardMemberView | null>(null);
   const [revoking, setRevoking] = useState(false);
 
@@ -89,35 +94,48 @@ export default function BoardDetailPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      {/* App chrome first, board chrome second — identical on every page. */}
+      <AppNavbar
+        search={query}
+        onSearchChange={setQuery}
+        searchPlaceholder="Filter cards on this board"
+        onCreateBoard={() => router.push('/boards?create=1')}
+      />
+
       {board ? (
-        <BoardHeader
+        <BoardBar
           board={board}
           presence={presence}
-        realtimeConnected={realtimeConnected}
-        currentUserId={user?.id}
-        onShareClick={() => setShareOpen(true)}
-          onSignOut={() => void logout()}
+          realtimeConnected={realtimeConnected}
+          currentUserId={user?.id}
+          onShareClick={() => setShareOpen(true)}
+          onBoardChange={applyBoard}
         />
       ) : (
-        <header className="border-b bg-background/80 backdrop-blur-xs">
-          <div className="container flex h-16 items-center px-4 sm:px-6 lg:px-8">
-            <p className="text-sm text-muted-foreground">
-              {boardLoading ? 'Loading board…' : error?.message ?? '…'}
-            </p>
-          </div>
-        </header>
+        <div className="flex h-12 items-center border-b px-3 sm:px-4">
+          <p className="text-sm text-muted-foreground">
+            {boardLoading ? 'Loading board…' : (error?.message ?? '…')}
+          </p>
+        </div>
       )}
 
-      <main className="flex flex-1 flex-col px-4 pb-12 pt-6 sm:px-6 lg:px-8">
-        {/*
-          flex + flex-1 the whole way down, not `h-full`: percentage heights
-          are fragile through several ancestors, and this is what actually
-          lets the board's drop zone stretch to fill the viewport instead of
-          collapsing to its (short) content height and leaving the rest of the
-          page dead blank space below the columns.
-        */}
-        <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col">
-          <KanbanBoard data={boardData} />
+      {/*
+        The canvas, and the only thing that carries the board's background.
+        The bars above keep the app surface so the chrome stays legible against
+        every palette entry.
+
+        flex + flex-1 the whole way down, not `h-full`: percentage heights are
+        fragile through several ancestors, and this is what lets the drop zone
+        stretch to fill the viewport instead of collapsing to its content
+        height. Full width now — no max-width container — so the board reads as
+        a canvas rather than a centred document.
+      */}
+      <main
+        className="board-canvas flex flex-1 flex-col px-3 pb-6 pt-4 sm:px-4"
+        style={backgroundStyle(board?.background)}
+      >
+        <div className="flex w-full flex-1 flex-col">
+          <KanbanBoard data={boardData} filter={query} />
         </div>
       </main>
 

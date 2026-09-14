@@ -34,6 +34,14 @@ import { TaskDetailDialog, type TaskEditValues } from './task-detail-dialog';
 export interface KanbanBoardProps {
   boardId?: string;
   data?: UseBoardDataResult;
+  /**
+   * Free-text filter from the navbar search.
+   *
+   * Applied to what is rendered, never to what is stored: the underlying board
+   * state is untouched, so a drag while filtered still persists against the
+   * real ordering, and clearing the box restores every card immediately.
+   */
+  filter?: string;
 }
 
 /**
@@ -41,7 +49,7 @@ export interface KanbanBoardProps {
  * between optimistic UI mutations and `useBoardData`. The kanban components
  * inside stay pure presentational.
  */
-export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
+export function KanbanBoard({ boardId, data, filter }: KanbanBoardProps) {
   const internalData = useBoardData(data ? '' : (boardId ?? ''));
   const {
     board,
@@ -64,7 +72,48 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
     cancelDrag,
     presence,
     broadcastDrag,
+    handleCopyColumn,
+    handleMoveColumn,
   } = data ?? internalData;
+
+  /*
+    Pinned columns are a per-viewer preference, so they live in localStorage
+    rather than on the board: pinning changes what stays on YOUR screen while
+    scrolling, and pushing that to the server would move a teammate's board for
+    reasons they never asked for.
+  */
+  const storageKey = board ? `kanban:pinned:${board.id}` : null;
+  const [pinnedColumnIds, setPinnedColumnIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!storageKey) return;
+    try {
+      const raw = window.localStorage.getItem(storageKey);
+      setPinnedColumnIds(new Set(raw ? (JSON.parse(raw) as string[]) : []));
+    } catch {
+      // Private windows and blocked site data both throw here; an unpinned
+      // board is a perfectly good fallback.
+      setPinnedColumnIds(new Set());
+    }
+  }, [storageKey]);
+
+  const togglePin = useCallback(
+    (columnId: string) => {
+      setPinnedColumnIds((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(columnId)) next.add(columnId);
+        if (storageKey) {
+          try {
+            window.localStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
+          } catch {
+            // Preference lost on reload; the pin still works for this session.
+          }
+        }
+        return next;
+      });
+    },
+    [storageKey],
+  );
 
   /*
     Cards other people are holding right now.
@@ -158,7 +207,21 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
   const [activeTask, setActiveTask] = useState<BoardTask | null>(null);
   const [activeColumn, setActiveColumn] = useState<BoardColumn | null>(null);
 
-  const columns = useMemo(() => board?.columns ?? [], [board]);
+  const columns = useMemo(() => {
+    const all = board?.columns ?? [];
+    const needle = filter?.trim().toLowerCase();
+    if (!needle) return all;
+    // Columns are kept even when empty, so the board keeps its shape and a
+    // card can still be dragged into a column that currently matches nothing.
+    return all.map((column) => ({
+      ...column,
+      tasks: column.tasks.filter((task) =>
+        [task.title, task.description ?? '', task.key ?? ''].some((field) =>
+          field.toLowerCase().includes(needle),
+        ),
+      ),
+    }));
+  }, [board, filter]);
   const members: BoardMemberView[] = useMemo(() => board?.members ?? [], [board]);
   const columnIds = useMemo(() => columns.map((c) => c.id), [columns]);
   const boardLabels = useMemo(() => board?.labels ?? [], [board]);
@@ -500,13 +563,19 @@ export function KanbanBoard({ boardId, data }: KanbanBoardProps) {
         */}
         <div className="flex flex-1 gap-3 overflow-x-auto pb-4">
           <SortableContext items={columnIds} strategy={horizontalListSortingStrategy}>
-            {columns.map((col) => (
+            {columns.map((col, columnIndex) => (
               <KanbanColumn
                 remoteDraggingTaskIds={remoteDraggingTaskIds}
                 key={col.id}
                 column={col}
                 canEdit={canEdit}
                 isLastColumn={columns.length === 1}
+                index={columnIndex}
+                columnCount={columns.length}
+                pinned={pinnedColumnIds.has(col.id)}
+                onCopyColumn={handleCopyColumn}
+                onMoveColumnTo={handleMoveColumn}
+                onTogglePin={togglePin}
                 onAddTask={openDialogFor}
                 onOpenTask={handleOpenTask}
                 onCreateTaskInline={handleInlineCreateTask}

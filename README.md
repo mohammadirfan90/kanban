@@ -28,13 +28,16 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 - **Public view-only links** — an owner can publish a board at an unguessable URL that anyone can read without an account, then rotate or revoke it at any time. The public payload comes from its own projection: no members, no roles, no ids, and assignees by display name only, so publishing a board never discloses a collaborator email address
 - **Auth** — bcrypt (cost 12) passwords, a short-lived access JWT and a database-backed refresh session, both delivered as httpOnly cookies that JavaScript cannot read. Refresh tokens rotate on every use and only their SHA-256 hash is stored; replaying a rotated token is treated as theft and revokes the whole session family. Logout genuinely revokes, `logout-all` ends every device, and `GET /api/auth/sessions` lists what is signed in. The API parses `application/json` only, so a cross-site form cannot forge an authenticated request
 - **Realtime collaboration** — a Socket.IO gateway pushes canonical board changes to every viewer after persistence, with live presence avatars and an outline on whatever card someone else is dragging. The actor drops its own echo, remote updates are deferred while you are mid-drag, and removing a member closes their socket rather than waiting for a refresh. Concurrent moves converge because ordering is conflict-free by construction. If the socket never connects the board works exactly as before, just without live updates
+- **App shell** — one full-width navbar across every page (search, Create, account menu with theme and sign-out), with a separate board bar beneath it so board chrome never mixes with app chrome. Search filters boards on the boards page and cards on a board; `/` focuses it
+- **Board backgrounds** — ten preset gradients, stored as a palette token rather than a colour so one token resolves differently in light and dark and can never inject arbitrary CSS. Painted on the canvas only, never the chrome
+- **List actions** — add card, rename, copy list (duplicates the column and every card, each with its own key), move list to any position, pin list (a per-viewer sticky column kept in localStorage, so pinning never moves a teammate's board), delete
 - **Dark mode** — every page, every component, with next-themes
 - **Optimistic mutations** — the UI updates in the same frame as the interaction, then reconciles against the server's canonical ordering key; failures roll back
 - **Accessibility** — full keyboard drag-and-drop (`Space` to lift, arrows to move within a column and across columns, `Space` to drop, `Escape` to cancel), with screen-reader announcements that name the task and its destination column rather than reading raw ids. Plus focus rings and ARIA labels throughout
 
 ## Tech Stack
 
-**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · Socket.IO · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 170 e2e)
+**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · Socket.IO · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 180 e2e)
 
 **Frontend** — Next.js 14 (App Router) · TypeScript · shadcn/ui · Tailwind CSS · react-hook-form + zod · `@dnd-kit` · socket.io-client · Sonner · lucide-react
 
@@ -195,7 +198,7 @@ GET    /api/auth/sessions            # the caller's active sessions
 DELETE /api/auth/sessions/:id        # revoke one session (e.g. a device you don't recognise)
 
 GET    /api/boards                   # list boards the caller is a member of
-POST   /api/boards                   # create board (caller becomes OWNER)
+POST   /api/boards                   # create board (caller becomes OWNER; optional background token)
 GET    /api/boards/:id               # full board (columns + tasks + members + labels)
 PATCH  /api/boards/:id               # rename / describe
 DELETE /api/boards/:id               # OWNER only
@@ -216,6 +219,7 @@ DELETE /api/labels/:id               # delete (EDITOR+; detaches from tasks, doe
 POST   /api/columns                  # create column (appends; position is server-assigned)
 PATCH  /api/columns/:id              # rename
 PUT    /api/columns/reorder          # reorder all of a board's columns by index
+POST   /api/columns/:id/copy         # duplicate a column and its cards
 DELETE /api/columns/:id              # delete (last column → 400)
 
 POST   /api/tasks                    # create task (title, description, assigneeId, priority, dueDate, labelIds)

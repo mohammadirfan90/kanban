@@ -31,6 +31,8 @@ export interface BoardResponse {
   ownerId: string;
   /** Prefix for this board's task keys, e.g. `PR` in `PR-14`. */
   key: string;
+  /** Canvas background palette token, or null for the default surface. */
+  background: string | null;
   labels: BoardLabelView[];
   createdAt: string;
   updatedAt: string;
@@ -158,6 +160,7 @@ export class BoardsService {
           description: dto.description ?? null,
           ownerId: userId,
           key: deriveBoardKey(dto.title),
+          background: dto.background || null,
         },
       });
       await tx.boardMember.create({
@@ -194,6 +197,8 @@ export class BoardsService {
       data: {
         ...(dto.title !== undefined ? { title: dto.title } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
+        // An empty string is the client saying "back to the default surface".
+        ...(dto.background !== undefined ? { background: dto.background || null } : {}),
       },
       include: this.defaultInclude(),
     });
@@ -324,6 +329,7 @@ export class BoardsService {
       description: board.description,
       ownerId: board.ownerId,
       key: board.key,
+      background: board.background,
       createdAt: board.createdAt.toISOString(),
       updatedAt: board.updatedAt.toISOString(),
       role: callerRole,

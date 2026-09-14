@@ -9,6 +9,7 @@ import {
   reorderColumns,
   updateColumn,
   type ColumnResponse,
+  copyColumn,
 } from '@/lib/columns';
 import {
   createTask,
@@ -55,6 +56,8 @@ export interface UseBoardDataResult {
   error: BoardLoadError | null;
   /** True when the caller can mutate (EDITOR or OWNER). VIEWER = read-only. */
   canEdit: boolean;
+  /** Replace local board state without a request — used for optimistic edits. */
+  applyBoard: (board: Board) => void;
   /** Everyone currently viewing this board, with whatever card they are dragging. */
   presence: PresenceUser[];
   /** False when the socket is down — the board still works, just without live updates. */
@@ -71,6 +74,9 @@ export interface UseBoardDataResult {
   handleCreateColumn: (input: CreateColumnInput) => Promise<void>;
   handleUpdateColumn: (columnId: string, input: UpdateColumnInput) => Promise<void>;
   handleDeleteColumn: (columnId: string) => Promise<void>;
+  handleCopyColumn: (columnId: string) => Promise<void>;
+  /** Move a column to an absolute slot (0-based). */
+  handleMoveColumn: (columnId: string, index: number) => Promise<void>;
   /**
    * Merge a label created elsewhere (the task dialogs create them inline) into
    * the board's list, so the picker shows it without a refetch.
@@ -300,6 +306,11 @@ export function useBoardData(id: string): UseBoardDataResult {
     [fetchBoard],
   );
 
+  /**
+   * Duplicate a column. Refetch rather than splice: the copy arrives with
+   * server-assigned keys and positions for itself and every card in it, and
+   * inventing those locally is exactly the kind of guess that drifts.
+   */
   const addLabel = useCallback((label: BoardLabel): void => {
     setBoard((prev) => {
       if (!prev || prev.labels.some((l) => l.id === label.id)) return prev;
@@ -349,6 +360,45 @@ export function useBoardData(id: string): UseBoardDataResult {
     boardRef.current = updated;
     setBoard(updated);
   }, []);
+
+  const handleCopyColumn = useCallback(
+    async (columnId: string): Promise<void> => {
+      if (!canEdit) throw new Error('Forbidden');
+      await copyColumn(columnId);
+      await fetchBoard();
+    },
+    [canEdit, fetchBoard],
+  );
+
+  /** Move a column to an absolute slot, reusing the existing reorder endpoint. */
+  const handleMoveColumn = useCallback(
+    async (columnId: string, index: number): Promise<void> => {
+      const current = boardRef.current;
+      if (!canEdit || !current) throw new Error('Forbidden');
+
+      const ids = current.columns.map((c) => c.id);
+      const from = ids.indexOf(columnId);
+      if (from === -1 || from === index) return;
+      const next = [...ids];
+      next.splice(index, 0, next.splice(from, 1)[0]);
+
+      // Optimistic, with the same snapshot-and-restore shape a drag uses.
+      const snapshot = current;
+      const byId = new Map(current.columns.map((c) => [c.id, c]));
+      applyLocal((b) => ({
+        ...b,
+        columns: next.map((id) => byId.get(id)).filter((c): c is BoardColumn => c !== undefined),
+      }));
+      try {
+        await reorderColumns({ boardId: id, columnIds: next });
+      } catch (e) {
+        boardRef.current = snapshot;
+        setBoard(snapshot);
+        throw e;
+      }
+    },
+    [canEdit, id, applyLocal],
+  );
 
   /*
     True from drag start until the drop settles.
@@ -742,6 +792,7 @@ export function useBoardData(id: string): UseBoardDataResult {
     loading,
     error,
     canEdit,
+    applyBoard: (next: Board) => applyLocal(() => next),
     presence: realtime.presence,
     realtimeConnected: realtime.connected,
     broadcastDrag: realtime.broadcastDrag,
@@ -753,6 +804,8 @@ export function useBoardData(id: string): UseBoardDataResult {
     handleCreateColumn,
     handleUpdateColumn,
     handleDeleteColumn,
+    handleCopyColumn,
+    handleMoveColumn,
     addLabel,
     beginDrag,
     previewTaskMove,

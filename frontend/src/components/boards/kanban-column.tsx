@@ -27,6 +27,14 @@ export interface KanbanColumnProps {
   canEdit: boolean;
   /** Cards another viewer is dragging right now, outlined but still interactive. */
   remoteDraggingTaskIds?: ReadonlySet<string>;
+  /** Slot of this column and how many there are, for the Move list submenu. */
+  index: number;
+  columnCount: number;
+  /** Per-viewer stickiness, not board state. */
+  pinned: boolean;
+  onCopyColumn: (columnId: string) => Promise<void>;
+  onMoveColumnTo: (columnId: string, index: number) => Promise<void>;
+  onTogglePin: (columnId: string) => void;
   isLastColumn: boolean;
   onAddTask: (columnId: string) => void;
   onOpenTask: (task: BoardTask) => void;
@@ -39,6 +47,12 @@ export function KanbanColumn({
   column,
   canEdit,
   remoteDraggingTaskIds,
+  index,
+  columnCount,
+  pinned,
+  onCopyColumn,
+  onMoveColumnTo,
+  onTogglePin,
   isLastColumn,
   onAddTask,
   onOpenTask,
@@ -59,6 +73,10 @@ export function KanbanColumn({
       className={cn(
         'flex max-h-full min-h-48 shrink-0 flex-col gap-2 rounded-lg bg-muted/30 p-3',
         COLUMN_WIDTH,
+        // Sticky rather than reordered: pinning is about what stays on screen
+        // while you scroll sideways, so it must not change the board for
+        // anyone else. z-20 keeps it above the columns sliding underneath.
+        pinned && 'sticky left-0 z-20 shadow-lg ring-1 ring-primary/30',
         // The original stays in place as a hollow slot while the DragOverlay
         // renders the copy that follows the cursor.
         isDragging && 'opacity-40',
@@ -70,8 +88,15 @@ export function KanbanColumn({
         column={column}
         canEdit={canEdit}
         isLastColumn={isLastColumn}
+        index={index}
+        columnCount={columnCount}
+        pinned={pinned}
         onRename={onRenameColumn}
         onDelete={onDeleteColumn}
+        onAddCard={() => onAddTask(column.id)}
+        onCopyColumn={onCopyColumn}
+        onMoveColumnTo={onMoveColumnTo}
+        onTogglePin={onTogglePin}
         dragHandleProps={listeners}
       />
 
@@ -133,15 +158,29 @@ function Header({
   column,
   canEdit,
   isLastColumn,
+  index,
+  columnCount,
+  pinned,
   onRename,
   onDelete,
+  onAddCard,
+  onCopyColumn,
+  onMoveColumnTo,
+  onTogglePin,
   dragHandleProps,
 }: {
   column: BoardColumn;
   canEdit: boolean;
   isLastColumn: boolean;
+  index: number;
+  columnCount: number;
+  pinned: boolean;
   onRename: (columnId: string, title: string) => Promise<void>;
   onDelete: (columnId: string) => Promise<void>;
+  onAddCard: () => void;
+  onCopyColumn: (columnId: string) => Promise<void>;
+  onMoveColumnTo: (columnId: string, index: number) => Promise<void>;
+  onTogglePin: (columnId: string) => void;
   dragHandleProps?: SyntheticListenerMap;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -261,8 +300,15 @@ function Header({
             columnId={column.id}
             columnTitle={column.title}
             isLastColumn={isLastColumn}
+            index={index}
+            columnCount={columnCount}
+            pinned={pinned}
             onRename={startRename}
             onDelete={onDelete}
+            onAddCard={onAddCard}
+            onCopy={onCopyColumn}
+            onMoveTo={onMoveColumnTo}
+            onTogglePin={onTogglePin}
           />
         )}
       </div>

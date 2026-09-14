@@ -4,11 +4,15 @@ import { request } from './api';
 import type { Board, PublicBoard, PublicLink, PublicLinkStatus } from './types';
 
 export interface CreateBoardInput {
+  /** Palette token from lib/board-background.ts. */
+  background?: string;
   title: string;
   description?: string;
 }
 
 export interface UpdateBoardInput {
+  /** Palette token, or an empty string to reset to the default surface. */
+  background?: string;
   title?: string;
   description?: string;
 }

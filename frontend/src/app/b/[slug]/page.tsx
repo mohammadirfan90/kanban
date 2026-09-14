@@ -140,6 +140,12 @@ export default function PublicBoardPage() {
                 column={column}
                 canEdit={false}
                 isLastColumn={false}
+                index={0}
+                columnCount={0}
+                pinned={false}
+                onCopyColumn={noopAsync}
+                onMoveColumnTo={noopAsync}
+                onTogglePin={noop}
                 onAddTask={noop}
                 onOpenTask={noop}
                 onRenameColumn={noopAsync}

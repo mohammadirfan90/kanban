@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
-  LogOut,
   Plus,
   Inbox,
   Pencil,
@@ -33,8 +32,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ModeToggle } from '@/components/mode-toggle';
-import { Logo } from '@/components/logo';
+import { AppNavbar } from '@/components/app-navbar';
 import { BoardForm } from '@/components/boards/board-form';
 import { RoleBadge } from '@/components/boards/role-badge';
 import { useAuth } from '@/contexts/AuthContext';
@@ -43,13 +41,28 @@ import { listBoards, deleteBoard } from '@/lib/boards';
 import type { Board } from '@/lib/types';
 
 export default function BoardsPage() {
-  const { user, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const router = useRouter();
 
   const [boards, setBoards] = useState<Board[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  /*
+    Arriving from the navbar Create button on another page.
+
+    Read from window rather than useSearchParams(): that hook opts the route
+    out of static prerendering unless the whole page sits inside a Suspense
+    boundary, and `next build` fails on it. This flag is a one-shot client
+    concern, so there is nothing for the server to render anyway.
+  */
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('create') !== '1') return;
+    setCreateOpen(true);
+    // Drop the flag so a refresh does not reopen the dialog.
+    window.history.replaceState(null, '', '/boards');
+  }, []);
   const [editing, setEditing] = useState<Board | null>(null);
   const [deleting, setDeleting] = useState<Board | null>(null);
   const [deletingBusy, setDeletingBusy] = useState(false);
@@ -116,25 +129,24 @@ export default function BoardsPage() {
     );
   }
 
+  const needle = query.trim().toLowerCase();
+  const visibleBoards = needle
+    ? (boards ?? []).filter((b) =>
+        [b.title, b.description ?? ''].some((f) => f.toLowerCase().includes(needle)),
+      )
+    : boards;
+
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b">
-        <div className="container flex h-16 items-center justify-between">
-          <Logo href="/boards" />
-          <div className="flex items-center gap-3">
-            <span className="hidden text-sm text-muted-foreground sm:inline">
-              {user.name ?? user.email}
-            </span>
-            <ModeToggle />
-            <Button variant="ghost" size="sm" onClick={() => void logout()}>
-              <LogOut className="mr-2 h-4 w-4" />
-              Sign out
-            </Button>
-          </div>
-        </div>
-      </header>
+      {/* Same chrome as the board page — identity, search and Create never move. */}
+      <AppNavbar
+        search={query}
+        onSearchChange={setQuery}
+        searchPlaceholder="Search your boards"
+        onCreateBoard={() => setCreateOpen(true)}
+      />
 
-      <main className="container px-4 py-12 sm:px-6 lg:px-8">
+      <main className="w-full px-4 py-10 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
           <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
             <div>
@@ -164,7 +176,7 @@ export default function BoardsPage() {
               <EmptyBoards onCreate={() => setCreateOpen(true)} />
             ) : (
               <BoardsGrid
-                boards={boards ?? []}
+                boards={visibleBoards ?? []}
                 onEdit={setEditing}
                 onDelete={setDeleting}
               />

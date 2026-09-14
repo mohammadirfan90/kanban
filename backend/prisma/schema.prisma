@@ -49,6 +49,11 @@ model Board {
   ownerId     String
   // Short prefix for human-readable task keys, e.g. "PR" -> PR-14.
   key         String
+  // Canvas background. A palette TOKEN ("mist", "dusk", ...), never a hex or a
+  // URL — same reasoning as Label.color: the client owns the palette so both
+  // themes can resolve a token, and an arbitrary value here would end up
+  // rendered straight into a style attribute.
+  background  String?
   // Monotonic per-board task counter. Incremented atomically so two concurrent
   // creates cannot claim the same number; never decremented, so deleting a task
   // does not recycle its key.

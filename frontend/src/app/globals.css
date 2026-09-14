@@ -219,3 +219,29 @@
     max-width: 1400px;
   }
 }
+
+/*
+  Board canvas background.
+
+  The colour arrives as two CSS variables set inline from the board's palette
+  token (see lib/board-background.ts), and the theme picks which one applies.
+  Doing the light/dark choice in CSS rather than JS avoids a wrong-colour flash
+  on first paint, because the server does not know the viewer's theme.
+
+  `.board-canvas` with no variables set falls back to the normal surface, which
+  is what every board without a background gets.
+*/
+.board-canvas {
+  background: var(--board-canvas-light, hsl(var(--background)));
+  transition: background 200ms ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) .board-canvas {
+    background: var(--board-canvas-dark, hsl(var(--background)));
+  }
+}
+
+.dark .board-canvas {
+  background: var(--board-canvas-dark, hsl(var(--background)));
+}
