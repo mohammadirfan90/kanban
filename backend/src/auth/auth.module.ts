@@ -5,6 +5,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { SessionService } from './session.service';
 
 @Module({
   imports: [
@@ -17,7 +18,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
         if (!secret) {
           throw new Error('JWT_SECRET is not set in the environment');
         }
-        const expiresIn = config.get<string>('JWT_EXPIRES_IN', '24h');
+        // Short by design. The refresh session (SessionService) owns the login
+        // lifetime now, so an access token only has to outlive a page of
+        // requests — which means a leaked one is useful for minutes, not a day.
+        const expiresIn = config.get<string>('JWT_EXPIRES_IN', '15m');
         return {
           secret,
           signOptions: { expiresIn },
@@ -26,7 +30,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  exports: [AuthService, JwtModule],
+  providers: [AuthService, JwtStrategy, SessionService],
+  exports: [AuthService, SessionService, JwtModule],
 })
 export class AuthModule {}

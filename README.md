@@ -25,14 +25,14 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 - **Conflict-free ordering** — base62 fractional-index keys with a unique `(column, position)` constraint and bounded retry. Eight concurrent moves to the same slot leave eight distinct positions and a strict total order; there is no renumbering pass and no precision ceiling. See [`fractional-index.ts`](backend/src/common/ordering/fractional-index.ts)
 - **Task depth** — per-board labels, due dates with overdue styling, priority, and human-readable keys (`PR-14`) from an atomically-incremented per-board counter
 - **Sharing** — invite teammates by email, assign per-board roles
-- **Auth** — JWT-based register/login with bcrypt-hashed passwords
+- **Auth** — bcrypt (cost 12) passwords, a short-lived access JWT and a database-backed refresh session, both delivered as httpOnly cookies that JavaScript cannot read. Refresh tokens rotate on every use and only their SHA-256 hash is stored; replaying a rotated token is treated as theft and revokes the whole session family. Logout genuinely revokes, `logout-all` ends every device, and `GET /api/auth/sessions` lists what is signed in. The API parses `application/json` only, so a cross-site form cannot forge an authenticated request
 - **Dark mode** — every page, every component, with next-themes
 - **Optimistic mutations** — the UI updates in the same frame as the interaction, then reconciles against the server's canonical ordering key; failures roll back
 - **Accessibility** — full keyboard drag-and-drop (`Space` to lift, arrows to move within a column and across columns, `Space` to drop, `Escape` to cancel), with screen-reader announcements that name the task and its destination column rather than reading raw ids. Plus focus rings and ARIA labels throughout
 
 ## Tech Stack
 
-**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 132 e2e)
+**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 151 e2e)
 
 **Frontend** — Next.js 14 (App Router) · TypeScript · shadcn/ui · Tailwind CSS · react-hook-form + zod · `@dnd-kit` · Sonner · lucide-react
 
@@ -164,11 +164,12 @@ Both apps now run with hot-reload; the frontend proxies API calls to the backend
 
 ## Architecture
 
-### Schema (7 tables)
+### Schema (8 tables)
 
 | Table          | Purpose                                                  |
 | -------------- | -------------------------------------------------------- |
 | `users`        | Auth (email + bcrypt)                                    |
+| `sessions`     | Refresh sessions: SHA-256 `tokenHash`, `familyId` for replay detection, `expiresAt`/`revokedAt`, plus the device's user agent and IP |
 | `boards`       | Owned by a user; carries a derived `key` (`PR`) and an atomic `taskCounter` for task keys |
 | `board_members`| Many-to-many users ↔ boards with a `role` (OWNER/EDITOR/VIEWER) |
 | `columns`      | Belongs to a board, ordered by a fractional-index `position` (String) |
@@ -181,9 +182,14 @@ Full schema: [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma).
 ### API endpoints
 
 ```
-POST   /api/auth/register            # create account
-POST   /api/auth/login               # get JWT
-GET    /api/auth/me                  # current user from the JWT
+POST   /api/auth/register            # create account, opens a session
+POST   /api/auth/login               # opens a session
+POST   /api/auth/refresh             # rotate the refresh token, mint a new access token
+POST   /api/auth/logout              # revoke this session
+POST   /api/auth/logout-all          # revoke every session for the caller
+GET    /api/auth/me                  # current user (also verifies the session is live)
+GET    /api/auth/sessions            # the caller's active sessions
+DELETE /api/auth/sessions/:id        # revoke one session (e.g. a device you don't recognise)
 
 GET    /api/boards                   # list boards the caller is a member of
 POST   /api/boards                   # create board (caller becomes OWNER)
@@ -227,7 +233,8 @@ GET    /api/health                   # liveness probe (no auth)
 | ----------------- | -------- | -------------------------- | ---------------------------------------- |
 | `DATABASE_URL`    | ✅       | —                          | Postgres connection string              |
 | `JWT_SECRET`      | ✅       | —                          | Signing secret. **Generate per env.**   |
-| `JWT_EXPIRES_IN`  |          | `24h`                      | Token lifetime                          |
+| `JWT_EXPIRES_IN`  |          | `15m`                      | Access-token lifetime (short by design) |
+| `REFRESH_TOKEN_TTL_DAYS` |   | `30`                       | Refresh-session lifetime                |
 | `CORS_ORIGIN`     |          | `http://localhost:3000`    | Frontend URL (comma-separated for multi)|
 | `PORT`            |          | `3001`                     | API port                                |
 | `NODE_ENV`        |          | `development`              | `production` in Docker / deploy         |
@@ -243,7 +250,8 @@ GET    /api/health                   # liveness probe (no auth)
 | Variable              | Default                      | Notes                                                |
 | --------------------- | ---------------------------- | ---------------------------------------------------- |
 | `JWT_SECRET`          | `dev-secret-change-me`       | **Change this in production**                        |
-| `JWT_EXPIRES_IN`      | `24h`                        |                                                      |
+| `JWT_EXPIRES_IN`      | `15m`                        | Access-token lifetime                                |
+| `REFRESH_TOKEN_TTL_DAYS` | `30`                      | How long a session stays refreshable                 |
 | `CORS_ORIGIN`         | `http://localhost:3000`      | Match your frontend URL                              |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:3001/api`  | Used at frontend Docker build                        |
 

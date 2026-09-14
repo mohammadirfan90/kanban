@@ -35,6 +35,7 @@ model User {
   updatedAt    DateTime @updatedAt
 
   ownedBoards   Board[]       @relation("BoardOwner")
+  sessions      Session[]
   memberships   BoardMember[]
   assignedTasks Task[]        @relation("TaskAssignee")
 
@@ -162,4 +163,43 @@ model Task {
   @@index([dueDate])
   @@index([assigneeId])
   @@map("tasks")
+}
+
+// ── Auth session ────────────────────────────────────────────────────────
+//
+// The refresh side of the login lifecycle. Access tokens stay stateless and
+// short-lived (minutes); this table is what makes a session revocable, which a
+// bare JWT can never be — before it existed, "log out" only deleted the cookie
+// and the token stayed valid for its full 24h.
+//
+// Only a SHA-256 hash of the refresh token is stored. A database leak
+// therefore yields no usable tokens, the same reasoning as passwordHash.
+// (SHA-256, not bcrypt: the token is 256 bits of CSPRNG output, so it has no
+// guessable structure to slow down, and refresh runs on every page load.)
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  // SHA-256 of the opaque refresh token. Unique so a lookup is a single
+  // indexed probe rather than a scan over a user's sessions.
+  tokenHash  String    @unique
+  // Sessions born of one login share a familyId. Presenting an already-rotated
+  // token means the cookie was captured and replayed, so the whole family is
+  // revoked rather than just that token.
+  familyId   String
+  expiresAt  DateTime
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  // Set instead of deleting: a revoked row is what lets replay detection tell
+  // "rotated already" apart from "never existed".
+  revokedAt  DateTime?
+  userAgent  String?
+  ipAddress  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  // Supports the periodic sweep of dead rows.
+  @@index([expiresAt])
+  @@map("sessions")
 }

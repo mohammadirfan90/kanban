@@ -56,6 +56,47 @@ interface RequestOptions {
   signal?: AbortSignal;
 }
 
+/*
+  A single in-flight refresh, shared by every caller.
+
+  The access token is short-lived (15 minutes), so a board page that fires
+  several requests at once will see them all 401 within the same tick. Without
+  this, each one would POST /auth/refresh independently — and because refresh
+  tokens rotate, the first response would invalidate the token the others were
+  still using, which the backend treats as replay and answers by revoking the
+  whole session family. Concurrent refreshes would log the user out.
+
+  Holding one promise means exactly one rotation happens and everyone waits on it.
+*/
+let refreshInFlight: Promise<boolean> | null = null;
+
+/** Paths that must never trigger a refresh attempt, to avoid recursion. */
+const NO_REFRESH_PATHS = ['/auth/refresh', '/auth/login', '/auth/register', '/auth/logout'];
+
+async function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch(`${API_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+          credentials: 'include',
+        });
+        return res.ok;
+      } catch {
+        return false;
+      } finally {
+        // Cleared on the next tick so callers that awaited this promise all
+        // observe the same result before a new attempt can start.
+        setTimeout(() => {
+          refreshInFlight = null;
+        }, 0);
+      }
+    })();
+  }
+  return refreshInFlight;
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, headers = {}, signal } = options;
 
@@ -69,13 +110,24 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   const url = path.startsWith('http') ? path : `${API_URL}${path}`;
 
-  const res = await fetch(url, {
-    method,
-    headers: finalHeaders,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    signal,
-    credentials: 'include',
-  });
+  const send = (): Promise<Response> =>
+    fetch(url, {
+      method,
+      headers: finalHeaders,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal,
+      credentials: 'include',
+    });
+
+  let res = await send();
+
+  // An expired access token is the ordinary case, not an error: rotate the
+  // refresh cookie once and replay the request before surfacing anything.
+  if (res.status === 401 && !NO_REFRESH_PATHS.some((p) => path.startsWith(p))) {
+    if (await refreshSession()) {
+      res = await send();
+    }
+  }
 
   // 204 No Content — return undefined cast
   if (res.status === 204) {
