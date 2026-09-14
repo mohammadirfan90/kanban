@@ -142,16 +142,20 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (res.status === 401) {
       /*
         The backend cleared the cookie, or the request lacked one. Bounce to
-        /login — but never from a page that is itself an unauthenticated
-        destination.
+        /login — but never from a page that is itself meant to work without a
+        session.
 
-        `/register` has to be in this list. AuthProvider probes /auth/me on
-        every mount now that the JWT lives in an httpOnly cookie and JS can no
-        longer check for a token first. On the sign-up page that probe always
-        401s, so redirecting on it sent every visitor straight from the
-        registration form to the login form — sign-up was unreachable.
+        AuthProvider probes /auth/me on every mount, because the JWT lives in
+        an httpOnly cookie and JS can no longer check for a token first. On any
+        page a signed-out visitor is entitled to be on, that probe always 401s
+        — so without this list the probe itself would redirect them away.
+
+        Every entry here was a real bug: `/register` sent every new visitor
+        from the sign-up form to the login form, and `/b/` (a board shared by
+        public link) bounced anonymous viewers to login instead of showing them
+        the board they were sent.
       */
-      const UNAUTHENTICATED_PATHS = ['/login', '/register'];
+      const UNAUTHENTICATED_PATHS = ['/login', '/register', '/b/'];
       const onPublicPage =
         typeof window !== 'undefined' &&
         UNAUTHENTICATED_PATHS.some((p) => window.location.pathname.startsWith(p));

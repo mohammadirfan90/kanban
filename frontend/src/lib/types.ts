@@ -116,6 +116,8 @@ export interface Board {
   key: string;
   /** The caller's role on this board. */
   role: BoardRole;
+  /** A live public view-only link exists. The slug itself is owner-only. */
+  isPublic: boolean;
   labels: BoardLabel[];
   members: BoardMemberView[];
   columns: BoardColumn[];
@@ -126,4 +128,53 @@ export interface ApiError {
   statusCode: number;
   message: string | string[];
   error: string;
+}
+// ── Public (unauthenticated) board view ──────────────────────────────────
+//
+// Mirrors the backend PublicBoardView. Deliberately a separate type from
+// Board: it has no members, no roles and no board id, and its assignee is a
+// bare display name rather than a user object. Reusing Board here would make
+// it far too easy to render a field the API never sends.
+
+export interface PublicTask {
+  id: string;
+  columnId: string;
+  key: string;
+  title: string;
+  description: string | null;
+  position: string;
+  priority: TaskPriority | null;
+  dueDate: string | null;
+  labels: BoardLabel[];
+  assigneeName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublicColumn {
+  id: string;
+  title: string;
+  position: string;
+  tasks: PublicTask[];
+}
+
+export interface PublicBoard {
+  title: string;
+  description: string | null;
+  key: string;
+  updatedAt: string;
+  labels: BoardLabel[];
+  columns: PublicColumn[];
+}
+
+/** Owner view of a board public link. */
+export interface PublicLink {
+  slug: string;
+  url: string;
+  createdAt: string;
+}
+
+/** What a non-owner member learns: that the board is public, but not where. */
+export interface PublicLinkStatus {
+  isPublic: boolean;
 }

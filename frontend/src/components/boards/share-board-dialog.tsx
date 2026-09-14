@@ -35,6 +35,7 @@ import { shareBoard } from '@/lib/boards';
 import { lookupUserByEmail } from '@/lib/users';
 import { UserSearchInput } from './user-search-input';
 import type { Board } from '@/lib/types';
+import { PublicLinkSection } from './public-link-section';
 
 const shareSchema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -192,6 +193,13 @@ export function ShareBoardDialog({ board, open, onOpenChange, onShared }: ShareB
             </DialogFooter>
           </form>
         </Form>
+
+        {/*
+          Outside the invite form on purpose: publishing a board is a different
+          action with a different audience, and nesting it inside the form
+          would make Enter-to-submit ambiguous.
+        */}
+        <PublicLinkSection boardId={board.id} isOwner={board.role === 'OWNER'} />
       </DialogContent>
     </Dialog>
   );

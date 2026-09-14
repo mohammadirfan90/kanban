@@ -25,6 +25,7 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 - **Conflict-free ordering** — base62 fractional-index keys with a unique `(column, position)` constraint and bounded retry. Eight concurrent moves to the same slot leave eight distinct positions and a strict total order; there is no renumbering pass and no precision ceiling. See [`fractional-index.ts`](backend/src/common/ordering/fractional-index.ts)
 - **Task depth** — per-board labels, due dates with overdue styling, priority, and human-readable keys (`PR-14`) from an atomically-incremented per-board counter
 - **Sharing** — invite teammates by email, assign per-board roles
+- **Public view-only links** — an owner can publish a board at an unguessable URL that anyone can read without an account, then rotate or revoke it at any time. The public payload comes from its own projection: no members, no roles, no ids, and assignees by display name only, so publishing a board never discloses a collaborator email address
 - **Auth** — bcrypt (cost 12) passwords, a short-lived access JWT and a database-backed refresh session, both delivered as httpOnly cookies that JavaScript cannot read. Refresh tokens rotate on every use and only their SHA-256 hash is stored; replaying a rotated token is treated as theft and revokes the whole session family. Logout genuinely revokes, `logout-all` ends every device, and `GET /api/auth/sessions` lists what is signed in. The API parses `application/json` only, so a cross-site form cannot forge an authenticated request
 - **Dark mode** — every page, every component, with next-themes
 - **Optimistic mutations** — the UI updates in the same frame as the interaction, then reconciles against the server's canonical ordering key; failures roll back
@@ -32,7 +33,7 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 
 ## Tech Stack
 
-**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 151 e2e)
+**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 170 e2e)
 
 **Frontend** — Next.js 14 (App Router) · TypeScript · shadcn/ui · Tailwind CSS · react-hook-form + zod · `@dnd-kit` · Sonner · lucide-react
 
@@ -164,7 +165,7 @@ Both apps now run with hot-reload; the frontend proxies API calls to the backend
 
 ## Architecture
 
-### Schema (8 tables)
+### Schema (9 tables)
 
 | Table          | Purpose                                                  |
 | -------------- | -------------------------------------------------------- |
@@ -175,6 +176,7 @@ Both apps now run with hot-reload; the frontend proxies API calls to the backend
 | `columns`      | Belongs to a board, ordered by a fractional-index `position` (String) |
 | `tasks`        | Belongs to a column, ordered by a fractional-index `position` (String); carries `number` (→ display key `PR-14`), `priority`, `dueDate`, optional assignee |
 | `labels`       | Per-board, unique name per board, palette-token `color`  |
+| `board_public_links` | Unguessable slug per board, with `revokedAt` so a link can be rotated or turned off |
 | `task_labels`  | Many-to-many tasks ↔ labels                              |
 
 Full schema: [`backend/prisma/schema.prisma`](backend/prisma/schema.prisma).
@@ -199,6 +201,11 @@ DELETE /api/boards/:id               # OWNER only
 
 POST   /api/boards/:id/share          # OWNER invites a user (by email)
 DELETE /api/boards/:id/share/:userId    # OWNER removes a member
+
+POST   /api/boards/:id/public-link   # OWNER creates or rotates the public link
+GET    /api/boards/:id/public-link   # OWNER sees the slug; other members only { isPublic }
+DELETE /api/boards/:id/public-link   # OWNER revokes it
+GET    /api/public/boards/:slug      # no auth — read-only board behind a public link
 
 GET    /api/boards/:boardId/labels   # list a board's labels
 POST   /api/boards/:boardId/labels   # create a label (EDITOR+)

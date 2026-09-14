@@ -1,7 +1,7 @@
 // Boards API client — typed wrappers around the /boards endpoints.
 
 import { request } from './api';
-import type { Board } from './types';
+import type { Board, PublicBoard, PublicLink, PublicLinkStatus } from './types';
 
 export interface CreateBoardInput {
   title: string;
@@ -44,4 +44,27 @@ export async function shareBoard(id: string, input: ShareBoardInput): Promise<Bo
 
 export async function revokeBoardShare(id: string, userId: string): Promise<void> {
   await request<void>(`/boards/${id}/share/${userId}`, { method: 'DELETE' });
+}
+// ── Public links ────────────────────────────────────────────────────────
+
+/** Create the board public link, or rotate it if one already exists. OWNER only. */
+export async function createPublicLink(boardId: string): Promise<PublicLink> {
+  return request<PublicLink>(`/boards/${boardId}/public-link`, { method: 'POST' });
+}
+
+/**
+ * Owners receive the slug; other members receive only `{ isPublic }`.
+ * The union is what the API actually returns, so callers have to narrow.
+ */
+export async function getPublicLink(boardId: string): Promise<PublicLink | PublicLinkStatus> {
+  return request<PublicLink | PublicLinkStatus>(`/boards/${boardId}/public-link`);
+}
+
+export async function revokePublicLink(boardId: string): Promise<void> {
+  return request<void>(`/boards/${boardId}/public-link`, { method: 'DELETE' });
+}
+
+/** Unauthenticated read of a shared board. No cookie required or sent. */
+export async function getPublicBoard(slug: string): Promise<PublicBoard> {
+  return request<PublicBoard>(`/public/boards/${encodeURIComponent(slug)}`);
 }
