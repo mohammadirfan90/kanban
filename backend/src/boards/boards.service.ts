@@ -34,6 +34,8 @@ export interface BoardResponse {
   createdAt: string;
   updatedAt: string;
   role: BoardRole;
+  /** Whether a live public view-only link exists. The slug is owner-only. */
+  isPublic: boolean;
   members: BoardMemberView[];
   columns: BoardColumnView[];
 }
@@ -279,6 +281,15 @@ export class BoardsService {
           },
         },
       },
+      // Only enough to answer "is this board published?". Every member sees
+      // the badge — an editor should know the board is readable by the
+      // internet — but the slug itself is owner-only and comes from
+      // GET /boards/:id/public-link, never from here.
+      publicLinks: {
+        where: { revokedAt: null },
+        select: { id: true },
+        take: 1,
+      },
     };
   }
 
@@ -287,6 +298,7 @@ export class BoardsService {
       members: (BoardMember & { user: Pick<User, 'id' | 'email' | 'name'> })[];
       labels: { id: string; name: string; color: string }[];
       columns: (Column & { tasks: Parameters<typeof toTaskView>[0][] })[];
+      publicLinks: { id: string }[];
     },
     callerRole: BoardRole,
   ): BoardResponse {
@@ -299,6 +311,7 @@ export class BoardsService {
       createdAt: board.createdAt.toISOString(),
       updatedAt: board.updatedAt.toISOString(),
       role: callerRole,
+      isPublic: board.publicLinks.length > 0,
       labels: board.labels.map((l) => ({ id: l.id, name: l.name, color: l.color })),
       members: board.members.map((m) => ({
         userId: m.user.id,

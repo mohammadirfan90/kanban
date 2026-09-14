@@ -57,11 +57,12 @@ model Board {
   updatedAt   DateTime @updatedAt
 
   // owner is Restrict (not Cascade) per spec: deleting a user must NOT cascade-delete their boards
-  owner   User          @relation("BoardOwner", fields: [ownerId], references: [id], onDelete: Restrict)
-  members BoardMember[]
-  columns Column[]
-  labels  Label[]
-  tasks   Task[]
+  owner       User              @relation("BoardOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members     BoardMember[]
+  columns     Column[]
+  labels      Label[]
+  publicLinks BoardPublicLink[]
+  tasks       Task[]
 
   @@index([ownerId])
   @@map("boards")
@@ -202,4 +203,29 @@ model Session {
   // Supports the periodic sweep of dead rows.
   @@index([expiresAt])
   @@map("sessions")
+}
+
+// ── Public board links ──────────────────────────────────────────────────
+//
+// A capability URL: holding the slug is the entire authorization to read the
+// board, so the slug is 16 bytes of CSPRNG output rather than anything
+// derived from the board id.
+//
+// A table, not a Board.publicSlug column, so the link can be rotated and
+// revoked and so there is a record of who published a board and when.
+// Revocation sets revokedAt rather than deleting the row: a deleted row makes
+// "this link never existed" and "this link was turned off" indistinguishable
+// during an incident.
+model BoardPublicLink {
+  id          String    @id @default(uuid())
+  boardId     String
+  slug        String    @unique
+  createdById String
+  createdAt   DateTime  @default(now())
+  revokedAt   DateTime?
+
+  board Board @relation(fields: [boardId], references: [id], onDelete: Cascade)
+
+  @@index([boardId])
+  @@map("board_public_links")
 }
