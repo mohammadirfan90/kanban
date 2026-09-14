@@ -436,13 +436,28 @@ export function useBoardData(id: string): UseBoardDataResult {
     setBoard(snapshot);
   }, []);
 
+  /**
+   * Clear the drag session.
+   *
+   * Every exit path has to run this - drop, cancel and error alike. It used to
+   * live only in cancelDrag, so a completed drag left isDraggingRef stuck true
+   * and every later realtime event was deferred forever: live updates worked
+   * until the user dragged once, then silently stopped for the rest of the
+   * session. That is exactly the bug a two-browser test driven by API calls
+   * could not see, because it never dragged anything.
+   */
+  const endDrag = useCallback((): void => {
+    isDraggingRef.current = false;
+    previewHistoryRef.current = [];
+    realtimeRef.current?.broadcastDrag(null);
+  }, []);
+
   const cancelDrag = useCallback((): void => {
     restoreDragSnapshot();
     dragSnapshotRef.current = null;
-    previewHistoryRef.current = [];
-    isDraggingRef.current = false;
-    realtimeRef.current?.broadcastDrag(null);
-  }, [restoreDragSnapshot]);
+    endDrag();
+    realtimeRef.current?.flushDeferred();
+  }, [restoreDragSnapshot, endDrag]);
 
   /**
    * Apply the drop and persist it.
@@ -455,6 +470,9 @@ export function useBoardData(id: string): UseBoardDataResult {
    */
   const commitTaskDrag = useCallback(
     async (taskId: string, target: PreviewTarget | null): Promise<void> => {
+      // The interaction is over the moment the drop fires, so unblock remote
+      // updates first; the finally below replays anything that was deferred.
+      endDrag();
       const snapshot = dragSnapshotRef.current;
       dragSnapshotRef.current = null;
       if (!canEdit || !snapshot) return;
@@ -477,12 +495,16 @@ export function useBoardData(id: string): UseBoardDataResult {
         boardRef.current = snapshot;
         setBoard(snapshot);
         throw e;
+      } finally {
+        // Replay whatever other people did while this drag was in the air.
+        realtimeRef.current?.flushDeferred();
       }
     },
-    [canEdit, applyTaskPlacement],
+    [canEdit, applyTaskPlacement, endDrag],
   );
 
   const commitColumnDrag = useCallback(async (): Promise<void> => {
+    endDrag();
     const snapshot = dragSnapshotRef.current;
     dragSnapshotRef.current = null;
     if (!canEdit || !snapshot) return;
@@ -516,8 +538,10 @@ export function useBoardData(id: string): UseBoardDataResult {
       boardRef.current = snapshot;
       setBoard(snapshot);
       throw e;
+    } finally {
+      realtimeRef.current?.flushDeferred();
     }
-  }, [canEdit, id]);
+  }, [canEdit, id, endDrag]);
 
   // ── task mutators ───────────────────────────────────────────────────
 

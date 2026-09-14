@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   MEMBER_EVENT,
   getSocket,
@@ -15,6 +15,15 @@ export interface BoardRealtime {
   connected: boolean;
   /** Tell others which card this tab is dragging (null when it stops). */
   broadcastDrag: (taskId: string | null) => void;
+  /**
+   * Replay whatever arrived while this tab was mid-drag.
+   *
+   * Called by the drop handlers rather than polled. An earlier version used an
+   * interval that only armed itself if a refresh was already pending when the
+   * effect ran, so updates that arrived later than that render were never
+   * flushed at all.
+   */
+  flushDeferred: () => void;
 }
 
 interface Options {
@@ -148,20 +157,19 @@ export function useBoardRealtime({
     };
   }, [boardId, isDraggingRef]);
 
-  // Whatever arrived during a drag is collapsed into one refetch on release.
-  useEffect(() => {
+  /** Collapse everything missed during a drag into a single refetch. */
+  const flushDeferred = useCallback(() => {
     if (!pendingRefresh.current) return;
-    const timer = setInterval(() => {
-      if (isDraggingRef.current || !pendingRefresh.current) return;
-      pendingRefresh.current = false;
-      void handlers.current.refresh();
-    }, 300);
-    return () => clearInterval(timer);
-  });
+    pendingRefresh.current = false;
+    void handlers.current.refresh();
+  }, []);
 
-  const broadcastDrag = (taskId: string | null) => {
-    getSocket()?.emit('presence:drag', { boardId, taskId });
-  };
+  const broadcastDrag = useCallback(
+    (taskId: string | null) => {
+      getSocket()?.emit('presence:drag', { boardId, taskId });
+    },
+    [boardId],
+  );
 
-  return { presence, connected, broadcastDrag };
+  return { presence, connected, broadcastDrag, flushDeferred };
 }
