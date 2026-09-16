@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { LogOut, Monitor, Moon, Plus, Search, Sun, X } from 'lucide-react';
 import { useTheme } from 'next-themes';
@@ -89,9 +88,14 @@ export function AppNavbar({
   return (
     <header className="sticky top-0 z-40 border-b bg-background">
       <div className="flex h-14 w-full items-center gap-3 px-3 sm:px-4">
-        <Link href="/boards" className="shrink-0" aria-label="Your boards">
-          <Logo />
-        </Link>
+        {/*
+          Logo renders its own <Link> (defaulting to "/"), so wrapping it in
+          another one produced nested anchors. The browser un-nests those while
+          parsing and the inner href wins, which sent people to the marketing
+          page — where the signed-out header made it look like they had been
+          logged out, though the session was never touched.
+        */}
+        <Logo href="/boards" className="shrink-0" />
 
         {/* Centre column, capped so it stays centred on ultrawide displays. */}
         <div className="flex flex-1 justify-center px-2">
