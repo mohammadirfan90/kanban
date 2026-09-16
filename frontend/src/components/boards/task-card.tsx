@@ -3,12 +3,12 @@
 import { forwardRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Card } from '@/components/ui/card';
 import { isOptimisticId } from '@/hooks/use-board-data';
 import { cn } from '@/lib/utils';
 import type { BoardTask } from '@/lib/types';
 import { DueDate, LabelChip, PriorityIndicator } from './task-meta';
+import { UserAvatar } from '@/components/user-avatar';
 
 export interface TaskCardProps {
   task: BoardTask;
@@ -25,13 +25,6 @@ export interface TaskCardProps {
   onClick?: (task: BoardTask) => void;
 }
 
-function initials(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) return '?';
-  const parts = trimmed.split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 /**
  * Everything inside a task card, shared by the sortable card and the drag
@@ -73,9 +66,11 @@ function TaskCardBody({ task }: { task: BoardTask }) {
           {task.priority && <PriorityIndicator priority={task.priority} />}
           {task.dueDate && <DueDate dueDate={task.dueDate} />}
           {task.assignee && (
-            <Avatar size="sm" className="ml-auto">
-              <AvatarFallback>{initials(task.assignee.name)}</AvatarFallback>
-            </Avatar>
+            <UserAvatar
+              name={task.assignee.name}
+              avatarUrl={task.assignee.avatarUrl}
+              className="ml-auto"
+            />
           )}
         </div>
       )}

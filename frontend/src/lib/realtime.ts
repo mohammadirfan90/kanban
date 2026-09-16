@@ -20,6 +20,7 @@ export const MEMBER_EVENT = {
 export interface PresenceUser {
   userId: string;
   name: string;
+  avatarUrl: string | null;
   draggingTaskId: string | null;
 }
 

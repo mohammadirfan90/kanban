@@ -50,6 +50,7 @@ export const PUBLIC_EVENT = { invalidated: 'board:invalidated' } as const;
 export interface PresenceUser {
   userId: string;
   name: string;
+  avatarUrl: string | null;
   /** Task this user is currently dragging, if any. */
   draggingTaskId: string | null;
 }

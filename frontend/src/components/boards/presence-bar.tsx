@@ -4,15 +4,10 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import type { PresenceUser } from '@/lib/realtime';
+import { UserAvatar } from '@/components/user-avatar';
 
 const MAX_VISIBLE = 4;
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 export interface PresenceBarProps {
   users: PresenceUser[];
@@ -47,17 +42,16 @@ export function PresenceBar({ users, connected, currentUserId }: PresenceBarProp
         {visible.map((user) => (
           <Tooltip key={user.userId}>
             <TooltipTrigger asChild>
-              <Avatar
-                size="sm"
+              <UserAvatar
+                name={user.name}
+                avatarUrl={user.avatarUrl}
                 className={cn(
                   'ring-2 ring-background transition-shadow',
                   // A ring while they are dragging, so the avatar row and the
                   // highlighted card tell the same story.
                   user.draggingTaskId && 'ring-primary',
                 )}
-              >
-                <AvatarFallback>{initials(user.name)}</AvatarFallback>
-              </Avatar>
+              />
             </TooltipTrigger>
             <TooltipContent>
               {user.name}

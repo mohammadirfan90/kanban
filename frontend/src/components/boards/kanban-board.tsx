@@ -486,15 +486,6 @@ export function KanbanBoard({ boardId, data, filter }: KanbanBoardProps) {
     [handleDeleteColumn],
   );
 
-  // ── inline-add-task (no dialog) ──────────────────────────────────
-
-  const handleInlineCreateTask = useCallback(
-    async (columnId: string, title: string) => {
-      await handleCreateTask(columnId, { columnId, title });
-    },
-    [handleCreateTask],
-  );
-
   // ── column-create (form) ─────────────────────────────────────────
 
   const handleCreateColumnSubmit = useCallback(
@@ -578,7 +569,6 @@ export function KanbanBoard({ boardId, data, filter }: KanbanBoardProps) {
                 onTogglePin={togglePin}
                 onAddTask={openDialogFor}
                 onOpenTask={handleOpenTask}
-                onCreateTaskInline={handleInlineCreateTask}
                 onRenameColumn={handleRenameColumn}
                 onDeleteColumn={onColumnMenuDelete}
               />

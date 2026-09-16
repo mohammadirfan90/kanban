@@ -47,6 +47,8 @@ describe('Auth (e2e)', () => {
         id: expect.any(String),
         email: testEmail,
         name: testName,
+        // Null for a password account; a Google account carries the picture.
+        avatarUrl: null,
       });
       expect(res.body.user.passwordHash).toBeUndefined();
       expect(res.body.user.password).toBeUndefined();

@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { LogOut, Monitor, Moon, Plus, Search, Sun, X } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { Logo } from '@/components/logo';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -22,13 +21,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
+import { UserAvatar } from '@/components/user-avatar';
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 export interface AppNavbarProps {
   /** Current search text, lifted so the page decides what searching means. */
@@ -143,17 +137,13 @@ export function AppNavbar({
                 aria-label="Account menu"
                 className="rounded-full focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
-                <Avatar size="sm">
-                  <AvatarFallback>{initials(user?.name ?? '?')}</AvatarFallback>
-                </Avatar>
+                <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
               <DropdownMenuLabel className="font-normal">
                 <div className="flex items-center gap-2.5">
-                  <Avatar size="sm">
-                    <AvatarFallback>{initials(user?.name ?? '?')}</AvatarFallback>
-                  </Avatar>
+                  <UserAvatar name={user?.name} avatarUrl={user?.avatarUrl} />
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{user?.name}</p>
                     <p className="truncate text-xs text-muted-foreground">{user?.email}</p>

@@ -12,6 +12,8 @@ export interface AuthUser {
   id: string;
   email: string;
   name: string;
+  /** Provider profile picture, or null for a password account. */
+  avatarUrl: string | null;
 }
 
 export interface AuthResult {
@@ -90,7 +92,7 @@ export class AuthService {
     return {
       access_token: this.signAccessToken(user, session.id),
       refresh_token: refreshToken,
-      user: { id: user.id, email: user.email, name: user.name },
+      user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl ?? null },
     };
   }
 
@@ -104,7 +106,7 @@ export class AuthService {
    * exchange with Google.
    */
   async startSessionForUser(
-    user: { id: string; email: string; name: string },
+    user: { id: string; email: string; name: string; avatarUrl?: string | null },
     ctx: SessionContext = {},
   ): Promise<AuthResult> {
     return this.startSession(user, ctx);
@@ -115,11 +117,11 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
-    return { id: user.id, email: user.email, name: user.name };
+    return { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl };
   }
 
   private async startSession(
-    user: { id: string; email: string; name: string },
+    user: { id: string; email: string; name: string; avatarUrl?: string | null },
     ctx: SessionContext,
   ): Promise<AuthResult> {
     const { refreshToken, session } = await this.sessions.issue(user.id, ctx);
@@ -127,7 +129,7 @@ export class AuthService {
     return {
       access_token: this.signAccessToken(user, session.id),
       refresh_token: refreshToken,
-      user: { id: user.id, email: user.email, name: user.name },
+      user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl ?? null },
     };
   }
 

@@ -133,7 +133,7 @@ export function CreateTaskDialog({
             New task in &ldquo;{columnTitle}&rdquo;
           </DialogTitle>
           <DialogDescription>
-            Give it a clear title. You can add a description and assignee after creating it.
+            Set the title, and anything else you already know — assignee, priority, due date and labels.
           </DialogDescription>
         </DialogHeader>
 

@@ -100,6 +100,7 @@ describe('Boards (e2e)', () => {
         userId: owner.userId,
         email: owner.email,
         name: owner.name,
+        avatarUrl: null,
         role: 'OWNER',
       });
     });

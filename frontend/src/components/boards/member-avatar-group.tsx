@@ -1,16 +1,9 @@
 'use client';
 
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { BoardMemberView } from '@/lib/types';
+import { UserAvatar } from '@/components/user-avatar';
 
-function initials(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) return '?';
-  const parts = trimmed.split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 /**
  * Who has access to this board — distinct from PresenceBar, which shows who is
@@ -32,9 +25,7 @@ export function MemberAvatarGroup({
         {members.map((m) => (
           <Tooltip key={m.userId}>
             <TooltipTrigger asChild>
-              <Avatar size="sm" className="ring-2 ring-background">
-                <AvatarFallback>{initials(m.name)}</AvatarFallback>
-              </Avatar>
+              <UserAvatar name={m.name} avatarUrl={m.avatarUrl} className="ring-2 ring-background" />
             </TooltipTrigger>
             <TooltipContent>
               <p className="text-xs">

@@ -8,7 +8,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
-import { Check, GripVertical, ListPlus, Loader2, Plus, X } from 'lucide-react';
+import { Check, GripVertical, Loader2, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,7 +38,6 @@ export interface KanbanColumnProps {
   isLastColumn: boolean;
   onAddTask: (columnId: string) => void;
   onOpenTask: (task: BoardTask) => void;
-  onCreateTaskInline?: (columnId: string, title: string) => Promise<void>;
   onRenameColumn: (columnId: string, title: string) => Promise<void>;
   onDeleteColumn: (columnId: string) => Promise<void>;
 }
@@ -56,7 +55,6 @@ export function KanbanColumn({
   isLastColumn,
   onAddTask,
   onOpenTask,
-  onCreateTaskInline,
   onRenameColumn,
   onDeleteColumn,
 }: KanbanColumnProps) {
@@ -109,9 +107,6 @@ export function KanbanColumn({
         onOpenTask={onOpenTask}
       />
 
-      {canEdit && onCreateTaskInline && (
-        <InlineAddTask columnId={column.id} onCreate={onCreateTaskInline} onOpenDialog={() => onAddTask(column.id)} />
-      )}
     </div>
   );
 }
@@ -295,6 +290,28 @@ function Header({
         <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-secondary px-1.5 text-xs font-medium text-secondary-foreground tabular-nums">
           {column.tasks.length}
         </span>
+        {/*
+          Creation lives at the top of the list, not the bottom.
+
+          The bottom control drifted down as a column filled and eventually fell
+          below the fold, so the affordance was least reachable exactly when the
+          column was busiest. Here it stays put, next to the count the eye is
+          already on. It opens the full dialog — title, description, assignee,
+          priority, due date and labels — rather than a title-only composer,
+          because setting a due date should not require creating the card first
+          and then opening it again.
+        */}
+        {canEdit && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onAddCard}
+            aria-label={`Add a card to ${column.title}`}
+            title="Add a card"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
+        )}
         {canEdit && (
           <ColumnMenu
             columnId={column.id}
@@ -373,115 +390,5 @@ function TaskList({
         )}
       </div>
     </SortableContext>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// InlineAddTask — a single-line "Add task" prompt that creates on Enter.
-// Distinct from the full CreateTaskDialog (which has description + assignee).
-// ────────────────────────────────────────────────────────────────────────
-
-function InlineAddTask({
-  columnId,
-  onCreate,
-  onOpenDialog,
-}: {
-  columnId: string;
-  onCreate: (columnId: string, title: string) => Promise<void>;
-  onOpenDialog: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [busy, setBusy] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
-  const submit = async () => {
-    const trimmed = title.trim();
-    if (trimmed.length === 0) return;
-    setBusy(true);
-    try {
-      await onCreate(columnId, trimmed);
-      setTitle('');
-      // Stay open for rapid entry; user presses Escape or clicks outside to dismiss.
-    } catch {
-      // The hook has already toasted; keep the field open so user can retry.
-    } finally {
-      setBusy(false);
-      inputRef.current?.focus();
-    }
-  };
-
-  if (!open) {
-    // One affordance, not two. The full form is reachable from the expanded
-    // state, so the resting column shows a single quiet action.
-    return (
-      <Button
-        variant="ghost"
-        size="sm"
-        className="mt-auto w-full justify-start text-muted-foreground"
-        onClick={() => setOpen(true)}
-      >
-        <Plus className="mr-2 h-4 w-4" />
-        Add task
-      </Button>
-    );
-  }
-
-  return (
-    <div className="mt-auto flex items-center gap-1.5">
-      <Input
-        ref={inputRef}
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void submit();
-          if (e.key === 'Escape') {
-            setTitle('');
-            setOpen(false);
-          }
-        }}
-        placeholder="Task title"
-        maxLength={200}
-        disabled={busy}
-        className="h-8 text-sm"
-      />
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => void submit()}
-        disabled={busy || title.trim().length === 0}
-        aria-label="Add task"
-        title="Add task"
-      >
-        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={onOpenDialog}
-        disabled={busy}
-        aria-label="Add task with description and assignee"
-        title="More options"
-      >
-        <ListPlus className="h-3.5 w-3.5" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={() => {
-          setTitle('');
-          setOpen(false);
-        }}
-        disabled={busy}
-        aria-label="Cancel"
-        title="Cancel"
-      >
-        <X className="h-3.5 w-3.5" />
-      </Button>
-    </div>
   );
 }

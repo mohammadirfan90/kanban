@@ -146,6 +146,7 @@ describe('Tasks (e2e)', () => {
         id: editor.userId,
         name: editor.name,
         email: editor.email,
+        avatarUrl: null,
       });
     });
 
@@ -261,7 +262,7 @@ describe('Tasks (e2e)', () => {
       expect(Object.keys(res.body.assignee ?? {})).toEqual([]);
     });
 
-    it('returns 200 + task with nested assignee (id/name/email only)', async () => {
+    it('returns 200 + task with nested assignee (public profile fields only)', async () => {
       const res = await request(app.getHttpServer())
         .get(`/api/tasks/${assignedTaskId}`)
         .set('Authorization', `Bearer ${owner.token}`)
@@ -271,9 +272,15 @@ describe('Tasks (e2e)', () => {
         id: editor.userId,
         name: editor.name,
         email: editor.email,
+        avatarUrl: null,
       });
-      // Critical: assignee object should have exactly these 3 keys.
-      expect(Object.keys(res.body.assignee).sort()).toEqual(['email', 'id', 'name']);
+      /*
+        Critical: exactly these keys and no more. This is the assertion that
+        would fail if a passwordHash, a session, or any other column were ever
+        pulled in by widening the assignee select — which is why it enumerates
+        the keys instead of spot-checking a few.
+      */
+      expect(Object.keys(res.body.assignee).sort()).toEqual(['avatarUrl', 'email', 'id', 'name']);
     });
 
     it('returns 200 for VIEWER (read access allowed)', async () => {
@@ -344,6 +351,7 @@ describe('Tasks (e2e)', () => {
         id: editor.userId,
         name: editor.name,
         email: editor.email,
+        avatarUrl: null,
       });
     });
 

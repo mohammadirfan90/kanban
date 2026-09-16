@@ -14,6 +14,8 @@ export type BoardRole = 'OWNER' | 'EDITOR' | 'VIEWER';
 export type OrderKey = string;
 
 export interface User {
+  /** Provider profile picture, or null for a password account. */
+  avatarUrl?: string | null;
   id: string;
   email: string;
   name: string;
@@ -83,7 +85,7 @@ export interface BoardTask {
   dueDate: string | null;
   labels: TaskLabel[];
   /** Nested assignee object (id/name/email only); null when unassigned. */
-  assignee: { id: string; name: string; email: string } | null;
+  assignee: { id: string; name: string; email: string; avatarUrl?: string | null } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -98,6 +100,7 @@ export interface BoardColumn {
 
 /** A member on a board (with their user info flattened). */
 export interface BoardMemberView {
+  avatarUrl?: string | null;
   userId: string;
   email: string;
   name: string;

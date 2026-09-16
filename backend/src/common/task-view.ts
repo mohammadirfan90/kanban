@@ -31,7 +31,7 @@ export interface TaskView {
   priority: TaskPriority | null;
   dueDate: string | null;
   labels: TaskLabelView[];
-  assignee: { id: string; name: string; email: string } | null;
+  assignee: { id: string; name: string; email: string; avatarUrl: string | null } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,7 +45,7 @@ export interface TaskView {
  */
 export const TASK_INCLUDE = {
   assignee: {
-    select: { id: true, name: true, email: true },
+    select: { id: true, name: true, email: true, avatarUrl: true },
   },
   board: {
     select: { key: true },
@@ -60,7 +60,7 @@ export const TASK_INCLUDE = {
 
 /** What `TASK_INCLUDE` produces, so the mapper stays type-safe. */
 export type TaskWithRelations = Task & {
-  assignee: { id: string; name: string; email: string } | null;
+  assignee: { id: string; name: string; email: string; avatarUrl: string | null } | null;
   board: { key: string };
   labels: { label: TaskLabelView }[];
 };

@@ -14,12 +14,15 @@ interface GoogleProfile {
   email_verified: boolean;
   name?: string;
   given_name?: string;
+  /** Profile picture URL. Google serves these itself; we only store the URL. */
+  picture?: string;
 }
 
 export interface GoogleUser {
   id: string;
   email: string;
   name: string;
+  avatarUrl: string | null;
 }
 
 @Injectable()
@@ -168,15 +171,24 @@ export class GoogleService {
 
     const existingIdentity = await this.prisma.authIdentity.findUnique({
       where: { provider_providerAccountId: { provider: PROVIDER, providerAccountId: profile.sub } },
-      include: { user: { select: { id: true, email: true, name: true } } },
+      include: { user: { select: { id: true, email: true, name: true, avatarUrl: true } } },
     });
     if (existingIdentity) {
+      // Refresh the picture on every sign-in: Google rotates these URLs, and a
+      // stale one renders as a broken image rather than failing loudly.
+      if (profile.picture && profile.picture !== existingIdentity.user.avatarUrl) {
+        return this.prisma.user.update({
+          where: { id: existingIdentity.user.id },
+          data: { avatarUrl: profile.picture },
+          select: { id: true, email: true, name: true, avatarUrl: true },
+        });
+      }
       return existingIdentity.user;
     }
 
     const byEmail = await this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true, name: true },
+      select: { id: true, email: true, name: true, avatarUrl: true },
     });
 
     if (byEmail) {
@@ -190,6 +202,14 @@ export class GoogleService {
         data: { userId: byEmail.id, provider: PROVIDER, providerAccountId: profile.sub },
       });
       this.logger.log(`Linked Google identity to existing user ${byEmail.id}`);
+      // A password account had no picture; adopt Google's now there is one.
+      if (profile.picture && !byEmail.avatarUrl) {
+        return this.prisma.user.update({
+          where: { id: byEmail.id },
+          data: { avatarUrl: profile.picture },
+          select: { id: true, email: true, name: true, avatarUrl: true },
+        });
+      }
       return byEmail;
     }
 
@@ -199,9 +219,10 @@ export class GoogleService {
         name: profile.name ?? profile.given_name ?? email.split('@')[0],
         // No password, by design — this account signs in through Google only.
         passwordHash: null,
+        avatarUrl: profile.picture ?? null,
         identities: { create: { provider: PROVIDER, providerAccountId: profile.sub } },
       },
-      select: { id: true, email: true, name: true },
+      select: { id: true, email: true, name: true, avatarUrl: true },
     });
     this.logger.log(`Created user ${created.id} from Google sign-in`);
     return created;

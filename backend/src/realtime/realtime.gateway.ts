@@ -105,13 +105,17 @@ export class RealtimeGateway implements OnGatewayInit, OnGatewayConnection, OnGa
 
     const user = await this.prisma.user.findUnique({
       where: { id: state.userId },
-      select: { name: true },
+      select: { name: true, avatarUrl: true },
     });
 
     await client.join(memberRoom(boardId));
     state.boardIds.add(boardId);
     state.name = user?.name ?? 'Someone';
-    this.realtime.addPresence(boardId, client.id, { userId: state.userId, name: state.name });
+    this.realtime.addPresence(boardId, client.id, {
+      userId: state.userId,
+      name: state.name,
+      avatarUrl: user?.avatarUrl ?? null,
+    });
     return { ok: true };
   }
 

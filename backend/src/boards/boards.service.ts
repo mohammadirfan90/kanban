@@ -53,6 +53,7 @@ export interface BoardMemberView {
   userId: string;
   email: string;
   name: string;
+  avatarUrl: string | null;
   role: BoardRole;
 }
 
@@ -287,7 +288,7 @@ export class BoardsService {
       members: {
         orderBy: { createdAt: 'asc' as const },
         include: {
-          user: { select: { id: true, email: true, name: true } },
+          user: { select: { id: true, email: true, name: true, avatarUrl: true } },
         },
       },
       labels: {
@@ -316,7 +317,7 @@ export class BoardsService {
 
   private toBoardResponse(
     board: Board & {
-      members: (BoardMember & { user: Pick<User, 'id' | 'email' | 'name'> })[];
+      members: (BoardMember & { user: Pick<User, 'id' | 'email' | 'name' | 'avatarUrl'> })[];
       labels: { id: string; name: string; color: string }[];
       columns: (Column & { tasks: Parameters<typeof toTaskView>[0][] })[];
       publicLinks: { id: string }[];
@@ -339,6 +340,7 @@ export class BoardsService {
         userId: m.user.id,
         email: m.user.email,
         name: m.user.name,
+        avatarUrl: m.user.avatarUrl,
         role: m.role,
       })),
       columns: board.columns.map((c) => ({
