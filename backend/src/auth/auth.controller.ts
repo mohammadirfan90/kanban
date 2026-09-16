@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Req,
   Res,
   UnauthorizedException,
@@ -17,6 +18,7 @@ import { Throttle } from '@nestjs/throttler';
 import type { CookieOptions, Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { SessionService, type SessionContext, type SessionView } from './session.service';
+import { GoogleService } from './google.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -57,6 +59,17 @@ const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
  */
 const REFRESH_COOKIE_PATH = '/api/auth';
 
+/**
+ * Short-lived cookie carrying the OAuth `state` between the redirect out to
+ * Google and the callback coming back.
+ *
+ * Path-scoped to the callback and expiring in ten minutes: it is single-use
+ * CSRF material with no reason to exist on any other request.
+ */
+const OAUTH_STATE_COOKIE = 'kanban_oauth_state';
+const OAUTH_STATE_PATH = '/api/auth/google';
+const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000;
+
 /*
   Cookie attributes, derived per request and shared by set and clear so the
   browser can match them on removal.
@@ -92,6 +105,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly sessions: SessionService,
+    private readonly google: GoogleService,
   ) {}
 
   @Post('register')
@@ -196,6 +210,71 @@ export class AuthController {
     const revoked = await this.sessions.revokeById(jwt.sub, id);
     if (!revoked) {
       throw new NotFoundException('Session not found');
+    }
+  }
+
+  /**
+   * Which sign-in methods this deployment actually supports.
+   *
+   * The login page asks before rendering a Google button. A button that
+   * leads to "not configured" is worse than no button, and whether the
+   * credentials are present is deployment configuration, not a secret.
+   */
+  @Get('providers')
+  providers(): { google: boolean } {
+    return { google: this.google.enabled };
+  }
+
+  // ── Google sign-in ────────────────────────────────────────────────────
+
+  /** Kick off the OAuth dance: remember a state value, then hand off to Google. */
+  @Get('google')
+  @Throttle(REFRESH_LIMIT)
+  startGoogle(@Req() req: Request, @Res() res: Response): void {
+    const state = this.google.newState();
+    res.cookie(OAUTH_STATE_COOKIE, state, {
+      ...cookieOptions(req, OAUTH_STATE_PATH),
+      maxAge: OAUTH_STATE_MAX_AGE_MS,
+    });
+    res.redirect(this.google.authorizeUrl(state));
+  }
+
+  /**
+   * Google sends the browser back here with a code.
+   *
+   * Everything happens server-side from this point: the code is exchanged over
+   * a direct TLS call, the session cookies are set, and the browser is
+   * redirected to the app. No token ever reaches the page.
+   */
+  @Get('google/callback')
+  @Throttle(REFRESH_LIMIT)
+  async googleCallback(
+    @Query('code') code: string | undefined,
+    @Query('state') state: string | undefined,
+    @Query('error') error: string | undefined,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    // Always clear the state cookie: it is single-use whatever happens next.
+    res.clearCookie(OAUTH_STATE_COOKIE, cookieOptions(req, OAUTH_STATE_PATH));
+
+    // The user pressed cancel on the consent screen; not an error worth a 500.
+    if (error || !code) {
+      res.redirect(this.google.appUrl('/login?error=google_cancelled'));
+      return;
+    }
+
+    try {
+      const cookies = (req as Request & { cookies?: Record<string, string> }).cookies;
+      this.google.verifyState(state, cookies?.[OAUTH_STATE_COOKIE]);
+      const user = await this.google.resolveUser(code);
+      const result = await this.auth.startSessionForUser(user, contextOf(req));
+      this.setAuthCookies(req, res, result.access_token, result.refresh_token);
+      res.redirect(this.google.appUrl('/boards'));
+    } catch {
+      // Deliberately generic, and a redirect rather than a JSON error: the
+      // browser is mid-navigation, so the user needs a page, not a payload.
+      res.redirect(this.google.appUrl('/login?error=google_failed'));
     }
   }
 

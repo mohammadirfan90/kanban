@@ -29,15 +29,18 @@ enum TaskPriority {
 model User {
   id           String   @id @default(uuid())
   email        String   @unique
-  passwordHash String
+  // Nullable: an account created through Google has no password at all.
+  // Login checks for null rather than comparing against a hash that is not there.
+  passwordHash String?
   name         String
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  ownedBoards   Board[]       @relation("BoardOwner")
+  ownedBoards   Board[]        @relation("BoardOwner")
   sessions      Session[]
+  identities    AuthIdentity[]
   memberships   BoardMember[]
-  assignedTasks Task[]        @relation("TaskAssignee")
+  assignedTasks Task[]         @relation("TaskAssignee")
 
   @@map("users")
 }
@@ -233,4 +236,42 @@ model BoardPublicLink {
 
   @@index([boardId])
   @@map("board_public_links")
+}
+
+// ── Federated sign-in ───────────────────────────────────────────────────
+//
+// One row per external account linked to a user. A table rather than a
+//  column on User, because that column would have to be joined by a
+// second one for every future provider, and  is
+// the natural key either way.
+//
+// No tokens are stored. Google's access token is used once, server-side, to
+// read the profile during the callback and then discarded — we are not calling
+// Google APIs on the user's behalf, so keeping a refresh token would be a
+// liability with no purpose.
+// ── Federated sign-in ───────────────────────────────────────────────────
+//
+// One row per external account linked to a user. A table rather than a
+// googleId column on User, because that column would need a sibling for every
+// future provider, and (provider, providerAccountId) is the natural key anyway.
+//
+// No provider tokens are stored. Google's access token is used once,
+// server-side, to read the profile during the callback and is then discarded —
+// we never call Google APIs on the user's behalf, so holding a refresh token
+// would be a liability with no purpose.
+model AuthIdentity {
+  id                String   @id @default(uuid())
+  userId            String
+  /// 'google' today. Lowercase, so lookups never depend on casing.
+  provider          String
+  /// The provider's stable user id (Google's `sub`), never the email: an email
+  /// address can change hands, `sub` cannot.
+  providerAccountId String
+  createdAt         DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("auth_identities")
 }

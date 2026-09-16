@@ -57,6 +57,19 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    /*
+      A Google-created account has no password at all.
+
+      Still runs the dummy compare and still returns the generic message: a
+      distinct "use Google to sign in" error here would tell an attacker which
+      addresses are Google accounts, which is exactly the enumeration the rest
+      of this method is careful to avoid.
+    */
+    if (!user.passwordHash) {
+      await bcrypt.compare(dto.password, '$2b$12$invalidsaltinvalidsaltinvalidsaltinvalidsalti');
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
     const passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordOk) {
       throw new UnauthorizedException('Invalid credentials');
@@ -79,6 +92,22 @@ export class AuthService {
       refresh_token: refreshToken,
       user: { id: user.id, email: user.email, name: user.name },
     };
+  }
+
+  /**
+   * Open a session for a user the Google flow already authenticated.
+   *
+   * Separate from login() on purpose: there is no password to check here, and
+   * routing an unauthenticated path through the same method as the credential
+   * one is how a "skip the password" bug gets written later. This is only
+   * reachable from the OAuth callback, after the state check and the code
+   * exchange with Google.
+   */
+  async startSessionForUser(
+    user: { id: string; email: string; name: string },
+    ctx: SessionContext = {},
+  ): Promise<AuthResult> {
+    return this.startSession(user, ctx);
   }
 
   async getMe(userId: string): Promise<AuthUser> {

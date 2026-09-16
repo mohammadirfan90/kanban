@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/form';
 import { useAuth } from '@/contexts/AuthContext';
 import { ApiClientError } from '@/lib/api';
+import { GoogleButton } from './google-button';
 
 const loginSchema = z.object({
   email: z.string().email('Enter a valid email'),
@@ -107,6 +108,8 @@ export function LoginForm() {
           )}
           Sign in
         </Button>
+
+        <GoogleButton label="Sign in with Google" />
 
         <p className="text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{' '}

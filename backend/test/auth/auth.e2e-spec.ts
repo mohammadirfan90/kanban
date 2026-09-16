@@ -55,9 +55,12 @@ describe('Auth (e2e)', () => {
     it('hashes the password with bcrypt (not plaintext)', async () => {
       const user = await prisma.user.findUnique({ where: { email: testEmail } });
       expect(user).not.toBeNull();
+      // Nullable since Google sign-in landed — an account registered with a
+      // password must still have one.
+      expect(user!.passwordHash).not.toBeNull();
       expect(user!.passwordHash).toMatch(/^\$2[aby]\$\d{2}\$/);
       expect(user!.passwordHash).not.toContain(testPassword);
-      expect(await bcrypt.compare(testPassword, user!.passwordHash)).toBe(true);
+      expect(await bcrypt.compare(testPassword, user!.passwordHash!)).toBe(true);
     });
 
     it('returns 409 for duplicate email', async () => {

@@ -31,13 +31,14 @@ A premium Trello-style Kanban board built with NestJS + Prisma + PostgreSQL on t
 - **App shell** — one full-width navbar across every page (search, Create, account menu with theme and sign-out), with a separate board bar beneath it so board chrome never mixes with app chrome. Search filters boards on the boards page and cards on a board; `/` focuses it
 - **Board backgrounds** — ten preset gradients, stored as a palette token rather than a colour so one token resolves differently in light and dark and can never inject arbitrary CSS. Painted on the canvas only, never the chrome
 - **List actions** — add card, rename, copy list (duplicates the column and every card, each with its own key), move list to any position, pin list (a per-viewer sticky column kept in localStorage, so pinning never moves a teammate's board), delete
+- **Google sign-in** — optional OAuth 2.0, enabled by setting credentials. Identities live in their own table keyed on Google's `sub` rather than a column on the user, so a changed Google address still signs you in and a second provider is additive. A Google-created account has no password at all; an existing account is only linked when Google reports the address verified, and password login against a Google-only account returns the same generic error as any wrong password
 - **Dark mode** — every page, every component, with next-themes
 - **Optimistic mutations** — the UI updates in the same frame as the interaction, then reconciles against the server's canonical ordering key; failures roll back
 - **Accessibility** — full keyboard drag-and-drop (`Space` to lift, arrows to move within a column and across columns, `Space` to drop, `Escape` to cancel), with screen-reader announcements that name the task and its destination column rather than reading raw ids. Plus focus rings and ARIA labels throughout
 
 ## Tech Stack
 
-**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · Socket.IO · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 180 e2e)
+**Backend** — NestJS 10 · Prisma 7 · PostgreSQL 16 · Socket.IO · JWT (`@nestjs/jwt`) · bcrypt · `class-validator` · Jest (29 unit + 192 e2e)
 
 **Frontend** — Next.js 14 (App Router) · TypeScript · shadcn/ui · Tailwind CSS · react-hook-form + zod · `@dnd-kit` · socket.io-client · Sonner · lucide-react
 
@@ -169,11 +170,12 @@ Both apps now run with hot-reload; the frontend proxies API calls to the backend
 
 ## Architecture
 
-### Schema (9 tables)
+### Schema (10 tables)
 
 | Table          | Purpose                                                  |
 | -------------- | -------------------------------------------------------- |
 | `users`        | Auth (email + bcrypt)                                    |
+| `auth_identities` | Linked external sign-ins: (provider, providerAccountId) unique; no provider tokens stored |
 | `sessions`     | Refresh sessions: SHA-256 `tokenHash`, `familyId` for replay detection, `expiresAt`/`revokedAt`, plus the device's user agent and IP |
 | `boards`       | Owned by a user; carries a derived `key` (`PR`) and an atomic `taskCounter` for task keys |
 | `board_members`| Many-to-many users ↔ boards with a `role` (OWNER/EDITOR/VIEWER) |
@@ -194,6 +196,9 @@ POST   /api/auth/refresh             # rotate the refresh token, mint a new acce
 POST   /api/auth/logout              # revoke this session
 POST   /api/auth/logout-all          # revoke every session for the caller
 GET    /api/auth/me                  # current user (also verifies the session is live)
+GET    /api/auth/providers           # which sign-in methods this deployment supports
+GET    /api/auth/google              # start Google sign-in
+GET    /api/auth/google/callback     # Google returns here; sets cookies, redirects to the app
 GET    /api/auth/sessions            # the caller's active sessions
 DELETE /api/auth/sessions/:id        # revoke one session (e.g. a device you don't recognise)
 

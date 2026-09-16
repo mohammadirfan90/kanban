@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/form';
 import { useAuth } from '@/contexts/AuthContext';
 import { ApiClientError } from '@/lib/api';
+import { GoogleButton } from './google-button';
 
 const registerSchema = z
   .object({
@@ -141,6 +142,8 @@ export function RegisterForm() {
           )}
           Create account
         </Button>
+
+        <GoogleButton label="Sign up with Google" />
 
         <p className="text-center text-sm text-muted-foreground">
           Already have an account?{' '}

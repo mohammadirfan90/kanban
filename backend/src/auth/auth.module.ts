@@ -6,6 +6,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { SessionService } from './session.service';
+import { GoogleService } from './google.service';
 
 @Module({
   imports: [
@@ -30,7 +31,7 @@ import { SessionService } from './session.service';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, SessionService],
-  exports: [AuthService, SessionService, JwtModule],
+  providers: [AuthService, JwtStrategy, SessionService, GoogleService],
+  exports: [AuthService, SessionService, GoogleService, JwtModule],
 })
 export class AuthModule {}
