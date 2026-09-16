@@ -1,9 +1,8 @@
-import Link from 'next/link';
-import { ArrowRight, MoonStar, Users, Zap } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { MoonStar, Users, Zap } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Logo } from '@/components/logo';
+import { LandingHeroActions, LandingNavActions } from '@/components/marketing/landing-actions';
 
 export default function HomePage() {
   return (
@@ -14,15 +13,8 @@ export default function HomePage() {
           <Logo href="/" />
           <nav className="flex items-center gap-2">
             <ModeToggle />
-            <Button variant="ghost" asChild>
-              <Link href="/login">Log in</Link>
-            </Button>
-            <Button asChild>
-              <Link href="/register">
-                Get started
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
+            {/* Client island: this page is server-rendered and cannot read AuthContext. */}
+            <LandingNavActions />
           </nav>
         </div>
       </header>
@@ -42,15 +34,7 @@ export default function HomePage() {
             Built with Next.js, NestJS, and Prisma.
           </p>
           <div className="mt-10 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button size="lg" asChild>
-              <Link href="/register">
-                Create your first board
-                <ArrowRight className="ml-2 h-4 w-4" />
-              </Link>
-            </Button>
-            <Button size="lg" variant="outline" asChild>
-              <Link href="/login">I already have an account</Link>
-            </Button>
+            <LandingHeroActions />
           </div>
         </div>
       </section>

@@ -157,25 +157,24 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (!res.ok) {
     if (res.status === 401) {
       /*
-        The backend cleared the cookie, or the request lacked one. Bounce to
-        /login — but never from a page that is itself meant to work without a
-        session.
+        The backend cleared the cookie, or the request lacked one.
 
-        AuthProvider probes /auth/me on every mount, because the JWT lives in
-        an httpOnly cookie and JS can no longer check for a token first. On any
-        page a signed-out visitor is entitled to be on, that probe always 401s
-        — so without this list the probe itself would redirect them away.
+        Listing which paths are PUBLIC was the wrong way round, and it was wrong
+        four separate times: /register bounced new users away from the sign-up
+        form, /b/ bounced anonymous visitors off a shared board, and "/" bounced
+        them off the landing page — each found only after shipping, because the
+        list silently failed to mention a page rather than failing loudly.
 
-        Every entry here was a real bug: `/register` sent every new visitor
-        from the sign-up form to the login form, and `/b/` (a board shared by
-        public link) bounced anonymous viewers to login instead of showing them
-        the board they were sent.
+        Listing the paths that REQUIRE a session instead means a new public page
+        needs no change here, and the failure mode of forgetting to add one is a
+        page that does not redirect when it arguably should — visible and
+        harmless — rather than a page nobody can reach.
       */
-      const UNAUTHENTICATED_PATHS = ['/login', '/register', '/b/'];
-      const onPublicPage =
+      const AUTHENTICATED_PREFIXES = ['/boards'];
+      const onProtectedPage =
         typeof window !== 'undefined' &&
-        UNAUTHENTICATED_PATHS.some((p) => window.location.pathname.startsWith(p));
-      if (typeof window !== 'undefined' && !onPublicPage) {
+        AUTHENTICATED_PREFIXES.some((p) => window.location.pathname.startsWith(p));
+      if (onProtectedPage) {
         window.location.href = '/login';
       }
     }
